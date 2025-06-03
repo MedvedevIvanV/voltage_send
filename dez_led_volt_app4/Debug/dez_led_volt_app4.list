@@ -27,9 +27,9 @@ Idx Name          Size      VMA       LMA       File off  Algn
                   ALLOC
  11 .ARM.attributes 00000036  00000000  00000000  0000c1d4  2**0
                   CONTENTS, READONLY
- 12 .debug_info   00012319  00000000  00000000  0000c20a  2**0
+ 12 .debug_info   00012318  00000000  00000000  0000c20a  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 13 .debug_abbrev 000024b5  00000000  00000000  0001e523  2**0
+ 13 .debug_abbrev 000024b5  00000000  00000000  0001e522  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
  14 .debug_aranges 00000f10  00000000  00000000  000209d8  2**3
                   CONTENTS, READONLY, DEBUGGING, OCTETS
@@ -1363,7 +1363,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	      if (HAL_UART_Receive(&hlpuart1, &received_cmd, 1, 100) == HAL_OK) {
+	    if (HAL_UART_Receive(&hlpuart1, &received_cmd, 1, 100) == HAL_OK) {
  8001070:	2364      	movs	r3, #100	@ 0x64
  8001072:	2201      	movs	r2, #1
  8001074:	4929      	ldr	r1, [pc, #164]	@ (800111c <main+0xe4>)
@@ -1372,50 +1372,50 @@ int main(void)
  800107c:	4603      	mov	r3, r0
  800107e:	2b00      	cmp	r3, #0
  8001080:	d1f6      	bne.n	8001070 <main+0x38>
-	          if (received_cmd == 'm') {
+	        if (received_cmd == 'm') {
  8001082:	4b26      	ldr	r3, [pc, #152]	@ (800111c <main+0xe4>)
  8001084:	781b      	ldrb	r3, [r3, #0]
  8001086:	2b6d      	cmp	r3, #109	@ 0x6d
  8001088:	d1f2      	bne.n	8001070 <main+0x38>
-	              uint32_t adcValue = 0;
+	            uint32_t adcValue = 0;
  800108a:	2300      	movs	r3, #0
  800108c:	61fb      	str	r3, [r7, #28]
-	              float voltage = 0.0f;
+	            float voltage = 0.0f;
  800108e:	f04f 0300 	mov.w	r3, #0
  8001092:	61bb      	str	r3, [r7, #24]
-	              char response[4] = {0};
+	            char response[4] = {0};
  8001094:	2300      	movs	r3, #0
  8001096:	617b      	str	r3, [r7, #20]
 
-	              // Калибровка и чтение ADC
-	              if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) == HAL_OK &&
+	            // Калибровка и чтение ADC
+	            if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) == HAL_OK &&
  8001098:	217f      	movs	r1, #127	@ 0x7f
  800109a:	4822      	ldr	r0, [pc, #136]	@ (8001124 <main+0xec>)
  800109c:	f001 ff30 	bl	8002f00 <HAL_ADCEx_Calibration_Start>
  80010a0:	4603      	mov	r3, r0
  80010a2:	2b00      	cmp	r3, #0
  80010a4:	d1e4      	bne.n	8001070 <main+0x38>
-	                  HAL_ADC_Start(&hadc1) == HAL_OK &&
+	                HAL_ADC_Start(&hadc1) == HAL_OK &&
  80010a6:	481f      	ldr	r0, [pc, #124]	@ (8001124 <main+0xec>)
  80010a8:	f001 f868 	bl	800217c <HAL_ADC_Start>
  80010ac:	4603      	mov	r3, r0
-	              if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) == HAL_OK &&
+	            if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) == HAL_OK &&
  80010ae:	2b00      	cmp	r3, #0
  80010b0:	d1de      	bne.n	8001070 <main+0x38>
-	                  HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK) {
+	                HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK) {
  80010b2:	2164      	movs	r1, #100	@ 0x64
  80010b4:	481b      	ldr	r0, [pc, #108]	@ (8001124 <main+0xec>)
  80010b6:	f001 f91b 	bl	80022f0 <HAL_ADC_PollForConversion>
  80010ba:	4603      	mov	r3, r0
-	                  HAL_ADC_Start(&hadc1) == HAL_OK &&
+	                HAL_ADC_Start(&hadc1) == HAL_OK &&
  80010bc:	2b00      	cmp	r3, #0
  80010be:	d1d7      	bne.n	8001070 <main+0x38>
 
-	                  adcValue = HAL_ADC_GetValue(&hadc1);
+	                adcValue = HAL_ADC_GetValue(&hadc1);
  80010c0:	4818      	ldr	r0, [pc, #96]	@ (8001124 <main+0xec>)
  80010c2:	f001 f9ed 	bl	80024a0 <HAL_ADC_GetValue>
  80010c6:	61f8      	str	r0, [r7, #28]
-	                  voltage = (float)adcValue * 3.3f / 4095.0f;
+	                voltage = (float)adcValue * 3.3f / 4095.0f;
  80010c8:	69fb      	ldr	r3, [r7, #28]
  80010ca:	ee07 3a90 	vmov	s15, r3
  80010ce:	eef8 7a67 	vcvt.f32.u32	s15, s15
@@ -1424,8 +1424,8 @@ int main(void)
  80010da:	eddf 6a14 	vldr	s13, [pc, #80]	@ 800112c <main+0xf4>
  80010de:	eec7 7a26 	vdiv.f32	s15, s14, s13
  80010e2:	edc7 7a06 	vstr	s15, [r7, #24]
-	                  char voltage_str[16];  // Буфер для строки
-	                  sprintf(voltage_str, "%.4f\n", voltage);  // Форматирование с 4 знаками после запятой
+	                char voltage_str[16];
+	                sprintf(voltage_str, "%.4f\n", voltage);
  80010e6:	69b8      	ldr	r0, [r7, #24]
  80010e8:	f7ff fa12 	bl	8000510 <__aeabi_f2d>
  80010ec:	4602      	mov	r2, r0
@@ -1433,7 +1433,7 @@ int main(void)
  80010f0:	1d38      	adds	r0, r7, #4
  80010f2:	490f      	ldr	r1, [pc, #60]	@ (8001130 <main+0xf8>)
  80010f4:	f005 fefa 	bl	8006eec <siprintf>
-	                  HAL_UART_Transmit(&hlpuart1, (uint8_t*)voltage_str, strlen(voltage_str), 500);
+	                HAL_UART_Transmit(&hlpuart1, (uint8_t*)voltage_str, strlen(voltage_str), 500);
  80010f8:	1d3b      	adds	r3, r7, #4
  80010fa:	4618      	mov	r0, r3
  80010fc:	f7ff f89c 	bl	8000238 <strlen>
@@ -1443,7 +1443,7 @@ int main(void)
  8001106:	f44f 73fa 	mov.w	r3, #500	@ 0x1f4
  800110a:	4805      	ldr	r0, [pc, #20]	@ (8001120 <main+0xe8>)
  800110c:	f004 f84e 	bl	80051ac <HAL_UART_Transmit>
-	      if (HAL_UART_Receive(&hlpuart1, &received_cmd, 1, 100) == HAL_OK) {
+	    if (HAL_UART_Receive(&hlpuart1, &received_cmd, 1, 100) == HAL_OK) {
  8001110:	e7ae      	b.n	8001070 <main+0x38>
  8001112:	bf00      	nop
  8001114:	42020800 	.word	0x42020800

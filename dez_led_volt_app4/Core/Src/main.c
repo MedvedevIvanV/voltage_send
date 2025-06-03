@@ -104,46 +104,25 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	      if (HAL_UART_Receive(&hlpuart1, &received_cmd, 1, 100) == HAL_OK) {
-	          if (received_cmd == 'm') {
-	              uint32_t adcValue = 0;
-	              float voltage = 0.0f;
-	              char response[4] = {0};
+	    if (HAL_UART_Receive(&hlpuart1, &received_cmd, 1, 100) == HAL_OK) {
+	        if (received_cmd == 'm') {
+	            uint32_t adcValue = 0;
+	            float voltage = 0.0f;
+	            char response[4] = {0};
 
-	              // Калибровка и чтение ADC
-	              if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) == HAL_OK &&
-	                  HAL_ADC_Start(&hadc1) == HAL_OK &&
-	                  HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK) {
+	            // Калибровка и чтение ADC
+	            if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) == HAL_OK &&
+	                HAL_ADC_Start(&hadc1) == HAL_OK &&
+	                HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK) {
 
-	                  adcValue = HAL_ADC_GetValue(&hadc1);
-	                  voltage = (float)adcValue * 3.3f / 4095.0f;
-	                  char voltage_str[16];  // Буфер для строки
-	                  sprintf(voltage_str, "%.4f\n", voltage);  // Форматирование с 4 знаками после запятой
-	                  HAL_UART_Transmit(&hlpuart1, (uint8_t*)voltage_str, strlen(voltage_str), 500);
-//	                  uint8_t voltage_bytes[4];
-//	                  memcpy(voltage_bytes, &voltage, 4);  // Копируем float в массив байт
-//
-//	                  // Отправляем 4 байта
-//	                  HAL_UART_Transmit(&hlpuart1, voltage_bytes, 4, 500);
-//	                  voltage = (float)adcValue * 3.3f / 4095.0f;
-//	                 snprintf(response, sizeof(response), "%.3f", voltage);
-//	                 HAL_UART_Transmit(&hlpuart1, (uint8_t*)response, strlen(response), 100);
-	                 // uint8_t voltage_bytes[sizeof(float)];
-
-	                  // Копируем побайтово float в массив uint8_t
-	                 // memcpy(voltage_bytes, &voltage, sizeof(float));
-
-	                  // Отправляем 4 байта (размер float)
-	                 // HAL_UART_Transmit(&hlpuart1, voltage_bytes, sizeof(float), 100);
-	              }
-//	              else {
-//	                  snprintf(response, sizeof(response), "ADC Error\r\n");
-//	              }
-//	              uint8_t one = 1;
-//	              HAL_UART_Transmit(&hlpuart1, &one, 1, 100);
-	              //HAL_UART_Transmit(&hlpuart1, (uint8_t*)response, strlen(response), 100);
-	          }
-	      }
+	                adcValue = HAL_ADC_GetValue(&hadc1);
+	                voltage = (float)adcValue * 3.3f / 4095.0f;
+	                char voltage_str[16];
+	                sprintf(voltage_str, "%.4f\n", voltage);
+	                HAL_UART_Transmit(&hlpuart1, (uint8_t*)voltage_str, strlen(voltage_str), 500);
+	            }
+	        }
+	    }
     /* USER CODE END WHILE */
     /* USER CODE BEGIN 3 */
   }
