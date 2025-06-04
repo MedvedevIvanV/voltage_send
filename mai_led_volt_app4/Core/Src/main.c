@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "usbd_cdc_if.h"
 #include "stm32f4xx_hal_flash.h"
+#include "stm32f4xx.h"
 #include <stdio.h>
 /* USER CODE END Includes */
 
@@ -37,7 +38,8 @@
 // Определяем адрес во Flash памяти для хранения напряжения (последняя страница Flash)
 #define VOLTAGE_STORAGE_ADDR 0x080E0000 // Адрес Sector 11 (для STM32F405VG)
 #define FLASH_SECTOR FLASH_SECTOR_11
-
+#define CS_LOW    GPIOC->BSRR = GPIO_BSRR_BR_8
+#define CS_HIGH   GPIOC->BSRR = GPIO_BSRR_BS_8
 // Переменная напряжения, размещенная во Flash памяти (только для чтения)
 __attribute__((section(".rodata"))) const float default_voltage = 3.3f; // Значение по умолчанию
 /* USER CODE END PD */
@@ -48,6 +50,8 @@ __attribute__((section(".rodata"))) const float default_voltage = 3.3f; // Зн�
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+SPI_HandleTypeDef hspi3;
+
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
@@ -58,6 +62,7 @@ uint8_t usb_led_command = 0;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_SPI3_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -107,6 +112,72 @@ float Read_Voltage_From_Flash() {
     }
     return *(float*)&voltageData;
 }
+
+
+
+void Spi3_Init(void) {
+    // Включаем тактирование порта C и SPI3
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
+    RCC->APB1ENR |= RCC_APB1ENR_SPI3EN;
+
+    // Настройка PC8 (CS) как выход
+    GPIOC->MODER |= GPIO_MODER_MODER8_0;  // Output mode
+    GPIOC->OTYPER &= ~GPIO_OTYPER_OT_8;   // Push-pull
+    GPIOC->OSPEEDR |= GPIO_OSPEEDR_OSPEED8; // High speed
+
+    // Настройка PC10 (SCK) и PC11 (MISO) как альтернативные функции
+    GPIOC->MODER |= GPIO_MODER_MODER10_1 | GPIO_MODER_MODER11_1; // Alternate function mode
+    GPIOC->AFR[1] |= (6 << (4*(10-8))) | (6 << (4*(11-8))); // AF6 for SPI3
+
+    // Настройка SPI3
+    SPI3->CR1 = SPI_CR1_SSM |          // Software slave management
+                SPI_CR1_SSI |          // Internal slave select
+                SPI_CR1_MSTR |         // Master mode
+                SPI_CR1_BR_2 |         // Baud rate control: fPCLK/256
+                SPI_CR1_CPHA |         // CPHA = 1
+                SPI_CR1_DFF;           // 16-bit data format
+
+    SPI3->CR1 |= SPI_CR1_SPE;          // Enable SPI3
+}
+
+uint16_t Spi3_Read_Data(void) {
+    uint16_t data = 0;
+
+    // Активируем Chip Select
+    CS_LOW;
+
+    // Ждем, пока Tx буфер опустеет
+    while(!(SPI3->SR & SPI_SR_TXE));
+
+    // Отправляем "пустые" данные для генерации тактовых импульсов
+    SPI3->DR = 0x0000;
+
+    // Ждем, пока данные будут получены
+    while(!(SPI3->SR & SPI_SR_RXNE));
+
+    // Считываем полученные данные
+    data = SPI3->DR;
+
+    // Деактивируем Chip Select
+    CS_HIGH;
+
+    return data;
+}
+
+float Read_Temperature(void) {
+    uint16_t raw_data = Spi3_Read_Data();
+
+    // Проверка на разрыв термопары (бит D2)
+    if(raw_data & 0x04) {
+        return -1.0f; // Ошибка - разрыв термопары
+    }
+
+    // Извлекаем 12-битное значение температуры (биты D15-D3)
+    raw_data >>= 3;
+
+    // Преобразуем в градусы Цельсия (0.25°C на LSB)
+    return raw_data * 0.25f;
+}
 /* USER CODE END 0 */
 
 /**
@@ -139,61 +210,74 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_USB_DEVICE_Init();
+  MX_SPI3_Init();
   /* USER CODE BEGIN 2 */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);  // Включаем транзистор
+  Spi3_Init();
+
+  float temperature = Read_Temperature();
+
+          if(temperature < 0) {
+              printf("Error: Thermocouple open!\n");
+          } else {
+              printf("Temperature: %.2f C\n", temperature);
+          }
+
+          // Задержка ~1 секунда
+          HAL_Delay(1000);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {    if (usb_rx_flag) {
-
-	  float current_voltage = Read_Voltage_From_Flash();
-
-	  char init_msg[32];
-	  sprintf(init_msg, "Initial voltage: %.4fV\r\n", current_voltage);
-	  CDC_Transmit_FS((uint8_t*)init_msg, strlen(init_msg));
-
-      usb_rx_flag = 0;
-      uint8_t usb_led_command = 'm';
-
-      // 1. Отправляем команду дежурному МК
-      if (HAL_UART_Transmit(&huart1, &usb_led_command, 1, 100) == HAL_OK) {
-          uint8_t uart_rx_buffer[64] = {0};
-          uint16_t index = 0;
-          float voltage = 0.0f;
-
-          // 2. Принимаем полное значение напряжения
-          while (1) {
-              if (HAL_UART_Receive(&huart1, &uart_rx_buffer[index], 1, 500) == HAL_OK) {
-                  // Проверяем конец строки
-                  if (uart_rx_buffer[index] == '\n' || index >= sizeof(uart_rx_buffer) - 1) {
-                      uart_rx_buffer[index] = '\0'; // Добавляем терминатор
-
-                      // 3. Преобразуем строку в float
-                      voltage = atof((char*)uart_rx_buffer);
-
-                      // 4. Записываем ВЕСЬ результат во Flash
-                      if (Write_Voltage_To_Flash(voltage) == HAL_OK) {
-                          // 5. Только после успешной записи читаем и отправляем
-                          float stored_voltage = Read_Voltage_From_Flash();
-
-                          char voltage_msg[32];
-                          sprintf(voltage_msg, "FLASH: %.4fV\r\n", stored_voltage);
-                          CDC_Transmit_FS((uint8_t*)voltage_msg, strlen(voltage_msg));
-                      } else {
-                          CDC_Transmit_FS((uint8_t*)"Flash write error\r\n", 19);
-                      }
-                      break;
-                  }
-                  index++;
-              } else {
-                  CDC_Transmit_FS((uint8_t*)"UART timeout\r\n", 14);
-                  break;
-              }
-          }
-      }
-    }
+  while (1){
+//    if (usb_rx_flag) {
+//
+//	  float current_voltage = Read_Voltage_From_Flash();
+//
+//	  char init_msg[32];
+//	  sprintf(init_msg, "Initial voltage: %.4fV\r\n", current_voltage);
+//	  CDC_Transmit_FS((uint8_t*)init_msg, strlen(init_msg));
+//
+//      usb_rx_flag = 0;
+//      uint8_t usb_led_command = 'm';
+//
+//      // 1. Отправляем команду дежурному МК
+//      if (HAL_UART_Transmit(&huart1, &usb_led_command, 1, 100) == HAL_OK) {
+//          uint8_t uart_rx_buffer[64] = {0};
+//          uint16_t index = 0;
+//          float voltage = 0.0f;
+//
+//          // 2. Принимаем полное значение напряжения
+//          while (1) {
+//              if (HAL_UART_Receive(&huart1, &uart_rx_buffer[index], 1, 500) == HAL_OK) {
+//                  // Проверяем конец строки
+//                  if (uart_rx_buffer[index] == '\n' || index >= sizeof(uart_rx_buffer) - 1) {
+//                      uart_rx_buffer[index] = '\0'; // Добавляем терминатор
+//
+//                      // 3. Преобразуем строку в float
+//                      voltage = atof((char*)uart_rx_buffer);
+//
+//                      // 4. Записываем ВЕСЬ результат во Flash
+//                      if (Write_Voltage_To_Flash(voltage) == HAL_OK) {
+//                          // 5. Только после успешной записи читаем и отправляем
+//                          float stored_voltage = Read_Voltage_From_Flash();
+//
+//                          char voltage_msg[32];
+//                          sprintf(voltage_msg, "FLASH: %.4fV\r\n", stored_voltage);
+//                          CDC_Transmit_FS((uint8_t*)voltage_msg, strlen(voltage_msg));
+//                      } else {
+//                          CDC_Transmit_FS((uint8_t*)"Flash write error\r\n", 19);
+//                      }
+//                      break;
+//                  }
+//                  index++;
+//              } else {
+//                  CDC_Transmit_FS((uint8_t*)"UART timeout\r\n", 14);
+//                  break;
+//              }
+//          }
+//      }
+//    }
     HAL_Delay(5000);
     /* USER CODE END WHILE */
 
@@ -248,6 +332,44 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief SPI3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI3_Init(void)
+{
+
+  /* USER CODE BEGIN SPI3_Init 0 */
+
+  /* USER CODE END SPI3_Init 0 */
+
+  /* USER CODE BEGIN SPI3_Init 1 */
+
+  /* USER CODE END SPI3_Init 1 */
+  /* SPI3 parameter configuration*/
+  hspi3.Instance = SPI3;
+  hspi3.Init.Mode = SPI_MODE_MASTER;
+  hspi3.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi3.Init.DataSize = SPI_DATASIZE_16BIT;
+  hspi3.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi3.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi3.Init.NSS = SPI_NSS_SOFT;
+  hspi3.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
+  hspi3.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi3.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi3.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi3.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI3_Init 2 */
+
+  /* USER CODE END SPI3_Init 2 */
+
+}
+
+/**
   * @brief USART1 Initialization Function
   * @param None
   * @retval None
@@ -299,13 +421,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13|TH_CS_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : PC13 */
-  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  /*Configure GPIO pins : PC13 TH_CS_Pin */
+  GPIO_InitStruct.Pin = GPIO_PIN_13|TH_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;

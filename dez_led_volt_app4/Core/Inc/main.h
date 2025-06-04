@@ -31,7 +31,8 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+extern GPIO_TypeDef* Bat23_GPIO_Port;
+extern uint16_t Bat23_Pin;
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -57,6 +58,8 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define Bat23_Pin GPIO_PIN_1
+#define Bat23_GPIO_Port GPIOA
 
 /* USER CODE BEGIN Private defines */
 

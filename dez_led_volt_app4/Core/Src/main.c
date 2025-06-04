@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <u_utils.h>
 #include "stm32l5xx_hal.h"
 /* USER CODE END Includes */
 
@@ -98,32 +99,59 @@ int main(void)
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);  // Включаем транзистор
   HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);  // Включить светодиод
+
+  TU1AdcValues adcValues = {0};
+  // Получение значений АЦП
+          GetAdcValues(&adcValues);
+//  TTemperatureValues tempValues;
+//      GetTemperature(&tempValues);
+//
+//      // Теперь tempValues.ChipTemperature содержит температуру в градусах Цельсия
+//      printf("Temperature: %.2f C\n", tempValues.ChipTemperature);
+//  TU1AdcValues adcValues;
+//  GetTemperature(&adcValues);
+//  float currentTemp = adcValues.ChipTemperature;
+//
+//  TemperatureValues tempValues;
+//  TemperatureSensor_Init();
+//
+//  uint32_t raw_vrefint = *((uint16_t*)0x0BFA05AA); // Калибровочное VREFINT
+//  uint32_t raw_ts_cal1 = *((uint16_t*)0x0BFA05A8); // Калибровка при 30°C
+//  uint32_t raw_ts_cal2 = *((uint16_t*)0x0BFA05CA); // Калибровка при 130°C
+//
+//  printf("CALIB: VREFINT=%lu, TS_CAL1=%lu, TS_CAL2=%lu\n",
+//         raw_vrefint, raw_ts_cal1, raw_ts_cal2);
+//  GetTemperature(&tempValues);
+//          float currentTemp = tempValues.ChipTemperature;
+
+          HAL_Delay(1000);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	    if (HAL_UART_Receive(&hlpuart1, &received_cmd, 1, 100) == HAL_OK) {
-	        if (received_cmd == 'm') {
-	            uint32_t adcValue = 0;
-	            float voltage = 0.0f;
-	            char response[4] = {0};
-
-	            // Калибровка и чтение ADC
-	            if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) == HAL_OK &&
-	                HAL_ADC_Start(&hadc1) == HAL_OK &&
-	                HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK) {
-
-	                adcValue = HAL_ADC_GetValue(&hadc1);
-	                voltage = (float)adcValue * 3.3f / 4095.0f;
-	                char voltage_str[16];
-	                sprintf(voltage_str, "%.4f\n", voltage);
-	                HAL_UART_Transmit(&hlpuart1, (uint8_t*)voltage_str, strlen(voltage_str), 500);
-	            }
-	        }
-	    }
+//	    if (HAL_UART_Receive(&hlpuart1, &received_cmd, 1, 100) == HAL_OK) {
+//	        if (received_cmd == 'm') {
+//	            uint32_t adcValue = 0;
+//	            float voltage = 0.0f;
+//	            char response[4] = {0};
+//
+//	            // Калибровка и чтение ADC
+//	            if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) == HAL_OK &&
+//	                HAL_ADC_Start(&hadc1) == HAL_OK &&
+//	                HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK) {
+//
+//	                adcValue = HAL_ADC_GetValue(&hadc1);
+//	                voltage = (float)adcValue * 3.3f / 4095.0f;
+//	                char voltage_str[16];
+//	                sprintf(voltage_str, "%.4f\n", voltage);
+//	                HAL_UART_Transmit(&hlpuart1, (uint8_t*)voltage_str, strlen(voltage_str), 500);
+//	            }
+//	        }
+//	    }
     /* USER CODE END WHILE */
+
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
@@ -198,11 +226,11 @@ static void MX_ADC1_Init(void)
   hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   hadc1.Init.LowPowerAutoWait = DISABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
-  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.NbrOfConversion = 4;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
@@ -230,6 +258,34 @@ static void MX_ADC1_Init(void)
   sConfig.SingleDiff = ADC_SINGLE_ENDED;
   sConfig.OffsetNumber = ADC_OFFSET_NONE;
   sConfig.Offset = 0;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
+  sConfig.Rank = ADC_REGULAR_RANK_2;
+  sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_VREFINT;
+  sConfig.Rank = ADC_REGULAR_RANK_3;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_VBAT;
+  sConfig.Rank = ADC_REGULAR_RANK_4;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -318,6 +374,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : Bat23_Pin */
+  GPIO_InitStruct.Pin = Bat23_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(Bat23_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PB0 */
   GPIO_InitStruct.Pin = GPIO_PIN_0;
