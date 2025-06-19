@@ -33,6 +33,8 @@
 /* Private variables ---------------------------------------------------------*/
 volatile uint8_t usb_rx_buffer[64] = {0}; // Буфер для приема данных
 volatile uint8_t usb_rx_flag = 0;         // Флаг получения данных
+
+volatile uint8_t new_data_received = 0;  // Новый флаг
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -110,7 +112,10 @@ uint8_t UserTxBufferFS[APP_TX_DATA_SIZE];
 extern USBD_HandleTypeDef hUsbDeviceFS;
 
 /* USER CODE BEGIN EXPORTED_VARIABLES */
-
+// Добавляем для доступа из main.c
+extern volatile uint8_t usb_rx_buffer[64];
+extern volatile uint8_t usb_rx_flag;
+extern volatile uint8_t new_data_received;
 /* USER CODE END EXPORTED_VARIABLES */
 
 /**
@@ -259,16 +264,19 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
   * @param  Len: Number of data received (in bytes)
   * @retval Result of the operation: USBD_OK if all operations are OK else USBD_FAIL
   */
+// Замените обработчик приема:
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
-  /* USER CODE BEGIN 6 */
-	  memcpy((void*)usb_rx_buffer, Buf, *Len); // Копируем полученные данные
-	  usb_rx_flag = 1; // Устанавливаем флаг получения
+  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, Buf); // Должно быть ДО копирования!
 
-	  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
-	  USBD_CDC_ReceivePacket(&hUsbDeviceFS);
-	  return (USBD_OK);
-  /* USER CODE END 6 */
+  if (*Len > 0 && *Len < APP_RX_DATA_SIZE) {
+      memcpy((void*)usb_rx_buffer, Buf, *Len);
+      usb_rx_buffer[*Len] = 0;
+      new_data_received = 1;
+  }
+
+  USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+  return USBD_OK;
 }
 
 /**
@@ -282,18 +290,23 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
   * @param  Len: Number of data to be sent (in bytes)
   * @retval USBD_OK if all operations are OK else USBD_FAIL or USBD_BUSY
   */
-uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len)
-{
-  uint8_t result = USBD_OK;
-  /* USER CODE BEGIN 7 */
-  USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
-  if (hcdc->TxState != 0){
-    return USBD_BUSY;
-  }
-  USBD_CDC_SetTxBuffer(&hUsbDeviceFS, Buf, Len);
-  result = USBD_CDC_TransmitPacket(&hUsbDeviceFS);
-  /* USER CODE END 7 */
-  return result;
+uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len) {
+    uint8_t result = USBD_OK;
+    USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
+
+    if (hcdc->TxState != 0) {
+        return USBD_BUSY;
+    }
+
+    USBD_CDC_SetTxBuffer(&hUsbDeviceFS, Buf, Len);
+    result = USBD_CDC_TransmitPacket(&hUsbDeviceFS);
+
+    // Добавьте небольшую задержку, если нужно
+    if (result == USBD_OK) {
+        HAL_Delay(1);
+    }
+
+    return result;
 }
 
 /**

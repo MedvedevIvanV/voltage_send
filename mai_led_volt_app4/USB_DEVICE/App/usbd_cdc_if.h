@@ -110,6 +110,7 @@ uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len);
 
 /* USER CODE BEGIN EXPORTED_FUNCTIONS */
 extern volatile uint8_t usb_rx_flag;  // Доступ к флагу из main.c
+void CDC_Set_UART_Handle(UART_HandleTypeDef *huart);
 /* USER CODE END EXPORTED_FUNCTIONS */
 
 /**

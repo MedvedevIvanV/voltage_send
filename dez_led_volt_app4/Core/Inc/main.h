@@ -31,13 +31,14 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-extern GPIO_TypeDef* Bat23_GPIO_Port;
-extern uint16_t Bat23_Pin;
+
+
+// Адреса для хранения данных (последняя страница FLASH STM32L552CCT6)
+
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/

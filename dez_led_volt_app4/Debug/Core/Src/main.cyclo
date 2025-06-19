@@ -1,6 +1,10 @@
-../Core/Src/main.c:71:5:main	1
-../Core/Src/main.c:164:6:SystemClock_Config	4
-../Core/Src/main.c:209:13:MX_ADC1_Init	7
-../Core/Src/main.c:304:13:MX_LPUART1_UART_Init	5
-../Core/Src/main.c:352:13:MX_GPIO_Init	1
-../Core/Src/main.c:404:6:Error_Handler	1
+../Core/Src/main.c:87:17:convert_to_timestamp	1
+../Core/Src/main.c:100:13:convert_from_timestamp	1
+../Core/Src/main.c:120:13:save_to_flash	6
+../Core/Src/main.c:150:26:read_from_flash	4
+../Core/Src/main.c:167:13:blink_led	2
+../Core/Src/main.c:180:13:is_rtc_initialized	1
+../Core/Src/main.c:188:13:initialize_rtc	1
+../Core/Src/main.c:210:5:main	4
+../Core/Src/main.c:293:6:SystemClock_Config	4
+../Core/Src/main.c:325:6:Error_Handler	1

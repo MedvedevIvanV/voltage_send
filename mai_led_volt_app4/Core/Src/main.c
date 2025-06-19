@@ -1,6 +1,6 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
+  *****************************************************************************
   * @file           : main.c
   * @brief          : Main program body
   ******************************************************************************
@@ -26,11 +26,15 @@
 #include "stm32f4xx_hal_flash.h"
 #include "stm32f4xx.h"
 #include <stdio.h>
+#include <string.h> // Для strncmp, strtok и других строковых функций
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef struct {
+    char date[20];    // Формат: "YYYY-MM-DD HH:MM:SS"
+    uint32_t period;  // Период в секундах
+} DateTimeData;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -56,6 +60,24 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 uint8_t usb_led_command = 0;
+
+// Объявляем внешние переменные из usbd_cdc_if.c
+extern volatile uint8_t usb_rx_buffer[64];
+extern volatile uint8_t new_data_received;
+
+DateTimeData app_data = {0};    // Данные от приложения
+DateTimeData backup_data = {0}; // Данные от дежурного МК
+uint8_t backup_data_valid = 0;  // Флаг валидности данных от дежурного МК
+
+#define LED_GPIO_Port GPIOC
+#define LED_Pin GPIO_PIN_13
+
+// Добавляем новые переменные для UART
+#define UART_BUF_SIZE 128
+uint8_t uart_buf[UART_BUF_SIZE];
+uint16_t uart_pos = 0;
+volatile uint8_t uart_msg_ready = 0;
+uint8_t uart_byte; // Для приема по одному байту
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -178,6 +200,122 @@ float Read_Temperature(void) {
     // Преобразуем в градусы Цельсия (0.25°C на LSB)
     return raw_data * 0.25f;
 }
+
+void Process_USB_Command(volatile uint8_t* data) {
+    char response[64];
+    static uint32_t led_off_time = 0;
+
+    // Обработка команды SETDATA
+    if (strncmp((char*)data, "SETDATA=", 8) == 0) {
+        char* comma_pos = strchr((char*)data + 8, ',');
+        char* newline_pos = strchr((char*)data, '\n');
+
+        // Проверка формата
+        if (!comma_pos || !newline_pos || comma_pos > newline_pos) {
+            CDC_Transmit_FS((uint8_t*)"ERR: Bad format\n", 16);
+            return;
+        }
+
+        // Извлекаем дату
+        size_t date_len = comma_pos - ((char*)data + 8);
+        strncpy(app_data.date, (char*)data + 8, date_len);
+        app_data.date[date_len] = '\0';
+
+        // Извлекаем период
+        app_data.period = atoi(comma_pos + 1);
+
+        // Формируем ответ
+        if (backup_data_valid) {
+            snprintf(response, sizeof(response),
+                    "ACK: Backup %s, %lus\n",
+                    backup_data.date, backup_data.period);
+        } else {
+            strcpy(response, "ACK: No backup data\n");
+        }
+        CDC_Transmit_FS((uint8_t*)response, strlen(response));
+    }
+    // Команда измерения напряжения
+    else if (data[0] == '1') {
+        CDC_Transmit_FS((uint8_t*)"VOLT: PA0=0.00V, PA1=0.00V\n", 26);
+    }
+    // Команда светодиода
+    else if (data[0] == '2') {
+        HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+        led_off_time = HAL_GetTick() + 5000;
+        CDC_Transmit_FS((uint8_t*)"LED: ON 5s\n", 11);
+    }
+    // Неизвестная команда
+    else {
+        CDC_Transmit_FS((uint8_t*)"ERR: Unknown cmd\n", 17);
+    }
+
+    // Автовыключение светодиода
+    if (led_off_time && HAL_GetTick() > led_off_time) {
+        HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+        led_off_time = 0;
+    }
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+    if(huart->Instance == USART1) {
+        if(uart_byte == '\n' || uart_byte == '\r') {
+            // Завершаем строку только если получили какие-то данные
+            if(uart_pos > 0) {
+                uart_buf[uart_pos] = '\0'; // Добавляем нуль-терминатор
+                uart_msg_ready = 1;       // Устанавливаем флаг готовности
+            }
+            // Всегда сбрасываем позицию для нового сообщения
+            uart_pos = 0;
+        }
+        else if(uart_byte >= 32 && uart_byte <= 126) { // Только печатные ASCII символы
+            if(uart_pos < UART_BUF_SIZE-1) { // Проверяем, чтобы не выйти за границы буфера
+                uart_buf[uart_pos++] = uart_byte;
+            } else {
+                // Переполнение буфера - начинаем сначала
+                uart_pos = 0;
+            }
+        }
+        // Возобновляем прием
+        HAL_UART_Receive_IT(&huart1, &uart_byte, 1);
+    }
+}
+
+void Process_UART_Data(uint8_t* data) {
+    // Проверяем минимальную длину сообщения
+    if(strlen((char*)data) < 20) { // DATE:2000-01-01 = 14 символов минимум
+        CDC_Transmit_FS((uint8_t*)"ERR: Message too short\r\n", 24);
+        return;
+    }
+
+    // Ищем разделители в строгом порядке
+    char* date_ptr = strstr((char*)data, "DATE:");
+    char* time_ptr = date_ptr ? strstr(date_ptr, ";TIME:") : NULL;
+    char* period_ptr = time_ptr ? strstr(time_ptr, ";PERIOD:") : NULL;
+
+    if(!date_ptr || !time_ptr || !period_ptr) {
+        CDC_Transmit_FS((uint8_t*)"ERR: Invalid message format\r\n", 28);
+        return;
+    }
+
+    // Парсим компоненты
+    int year, month, day, hour, min, sec;
+    unsigned long period;
+
+    if(sscanf(date_ptr, "DATE:%d-%d-%d", &year, &month, &day) != 3 ||
+       sscanf(time_ptr, ";TIME:%d:%d:%d", &hour, &min, &sec) != 3 ||
+       sscanf(period_ptr, ";PERIOD:%lu", &period) != 1) {
+        CDC_Transmit_FS((uint8_t*)"ERR: Parsing failed\r\n", 20);
+        return;
+    }
+
+    // Формируем и отправляем результат
+    char usb_msg[128];
+    snprintf(usb_msg, sizeof(usb_msg),
+           "PARSED: Date=%04d-%02d-%02d Time=%02d:%02d:%02d Period=%lus\r\n",
+           year, month, day, hour, min, sec, period);
+
+    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+}
 /* USER CODE END 0 */
 
 /**
@@ -217,68 +355,38 @@ int main(void)
 
   float temperature = Read_Temperature();
 
-          if(temperature < 0) {
-              printf("Error: Thermocouple open!\n");
-          } else {
-              printf("Temperature: %.2f C\n", temperature);
-          }
+  if(temperature < 0) {
+      printf("Error: Thermocouple open!\n");
+  } else {
+      printf("Temperature: %.2f C\n", temperature);
+  }
 
-          // Задержка ~1 секунда
-          HAL_Delay(1000);
+  HAL_Delay(1000);
+
+  // Добавляем инициализацию UART приема
+  HAL_UART_Receive_IT(&huart1, &uart_byte, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1){
-//    if (usb_rx_flag) {
-//
-//	  float current_voltage = Read_Voltage_From_Flash();
-//
-//	  char init_msg[32];
-//	  sprintf(init_msg, "Initial voltage: %.4fV\r\n", current_voltage);
-//	  CDC_Transmit_FS((uint8_t*)init_msg, strlen(init_msg));
-//
-//      usb_rx_flag = 0;
-//      uint8_t usb_led_command = 'm';
-//
-//      // 1. Отправляем команду дежурному МК
-//      if (HAL_UART_Transmit(&huart1, &usb_led_command, 1, 100) == HAL_OK) {
-//          uint8_t uart_rx_buffer[64] = {0};
-//          uint16_t index = 0;
-//          float voltage = 0.0f;
-//
-//          // 2. Принимаем полное значение напряжения
-//          while (1) {
-//              if (HAL_UART_Receive(&huart1, &uart_rx_buffer[index], 1, 500) == HAL_OK) {
-//                  // Проверяем конец строки
-//                  if (uart_rx_buffer[index] == '\n' || index >= sizeof(uart_rx_buffer) - 1) {
-//                      uart_rx_buffer[index] = '\0'; // Добавляем терминатор
-//
-//                      // 3. Преобразуем строку в float
-//                      voltage = atof((char*)uart_rx_buffer);
-//
-//                      // 4. Записываем ВЕСЬ результат во Flash
-//                      if (Write_Voltage_To_Flash(voltage) == HAL_OK) {
-//                          // 5. Только после успешной записи читаем и отправляем
-//                          float stored_voltage = Read_Voltage_From_Flash();
-//
-//                          char voltage_msg[32];
-//                          sprintf(voltage_msg, "FLASH: %.4fV\r\n", stored_voltage);
-//                          CDC_Transmit_FS((uint8_t*)voltage_msg, strlen(voltage_msg));
-//                      } else {
-//                          CDC_Transmit_FS((uint8_t*)"Flash write error\r\n", 19);
-//                      }
-//                      break;
-//                  }
-//                  index++;
-//              } else {
-//                  CDC_Transmit_FS((uint8_t*)"UART timeout\r\n", 14);
-//                  break;
-//              }
-//          }
-//      }
-//    }
-    HAL_Delay(5000);
+	  if(uart_msg_ready) {
+	          uart_msg_ready = 0; // Сбрасываем флаг сразу
+
+	          // Отправляем сырые данные для отладки
+	          char raw_msg[150];
+	          snprintf(raw_msg, sizeof(raw_msg), "UART RAW: %s\r\n", uart_buf);
+	          CDC_Transmit_FS((uint8_t*)raw_msg, strlen(raw_msg));
+
+	          // Обрабатываем данные
+	          Process_UART_Data(uart_buf);
+
+	          // Явно очищаем буфер
+	          memset(uart_buf, 0, sizeof(uart_buf));
+	          uart_pos = 0;
+	      }
+
+	      HAL_Delay(1);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
