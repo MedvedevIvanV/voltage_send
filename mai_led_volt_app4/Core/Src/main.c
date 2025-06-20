@@ -224,19 +224,24 @@ void Process_USB_Command(volatile uint8_t* data) {
         // Извлекаем период
         app_data.period = atoi(comma_pos + 1);
 
-        // Формируем ответ
-        if (backup_data_valid) {
-            snprintf(response, sizeof(response),
-                    "ACK: Backup %s, %lus\n",
-                    backup_data.date, backup_data.period);
-        } else {
-            strcpy(response, "ACK: No backup data\n");
-        }
+        // Формируем подтверждение с принятыми данными
+        snprintf(response, sizeof(response),
+                "ACK: Date=%s, Period=%lus\n",
+                app_data.date, app_data.period);
         CDC_Transmit_FS((uint8_t*)response, strlen(response));
+        Send_To_Backup_MK(&app_data);
+
+        return;
     }
     // Команда измерения напряжения
     else if (data[0] == '1') {
-        CDC_Transmit_FS((uint8_t*)"VOLT: PA0=0.00V, PA1=0.00V\n", 26);
+        float voltage_pa0 = 0.0f; // Здесь должны быть реальные измерения
+        float voltage_pa1 = 0.0f;
+
+        snprintf(response, sizeof(response),
+                "PA0=%.2fV,PA1=%.2fV\n",
+                voltage_pa0, voltage_pa1);
+        CDC_Transmit_FS((uint8_t*)response, strlen(response));
     }
     // Команда светодиода
     else if (data[0] == '2') {
@@ -311,10 +316,23 @@ void Process_UART_Data(uint8_t* data) {
     // Формируем и отправляем результат
     char usb_msg[128];
     snprintf(usb_msg, sizeof(usb_msg),
-           "PARSED: Date=%04d-%02d-%02d Time=%02d:%02d:%02d Period=%lus\r\n",
+           "Date=%04d-%02d-%02d Time=%02d:%02d:%02d Period=%lus\r\n",
            year, month, day, hour, min, sec, period);
 
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+}
+
+
+void Send_To_Backup_MK(DateTimeData* data)
+{
+    char uart_msg[64];
+    snprintf(uart_msg, sizeof(uart_msg),
+           "DATE:%s;TIME:%s;PERIOD:%lu\r\n",
+           data->date,  // Формат "YYYY-MM-DD"
+           data->date + 11, // Время "HH:MM:SS"
+           data->period);
+
+    HAL_UART_Transmit(&huart1, (uint8_t*)uart_msg, strlen(uart_msg), 100);
 }
 /* USER CODE END 0 */
 
@@ -370,23 +388,23 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1){
-	  if(uart_msg_ready) {
-	          uart_msg_ready = 0; // Сбрасываем флаг сразу
+	    // Обработка USB данных
+	    if(new_data_received) {
+	        new_data_received = 0;
+	        Process_USB_Command(usb_rx_buffer);
+	        memset((void*)usb_rx_buffer, 0, sizeof(usb_rx_buffer)); // Очистка буфера
+	    }
 
-	          // Отправляем сырые данные для отладки
-	          char raw_msg[150];
-	          snprintf(raw_msg, sizeof(raw_msg), "UART RAW: %s\r\n", uart_buf);
-	          CDC_Transmit_FS((uint8_t*)raw_msg, strlen(raw_msg));
-
-	          // Обрабатываем данные
-	          Process_UART_Data(uart_buf);
-
-	          // Явно очищаем буфер
-	          memset(uart_buf, 0, sizeof(uart_buf));
-	          uart_pos = 0;
-	      }
-
-	      HAL_Delay(1);
+	    if(uart_msg_ready) {
+	        uart_msg_ready = 0;
+	        char raw_msg[150];
+	        snprintf(raw_msg, sizeof(raw_msg), "UART RAW: %s\r\n", uart_buf);
+//	        CDC_Transmit_FS((uint8_t*)raw_msg, strlen(raw_msg));
+	        Process_UART_Data(uart_buf);
+	        memset(uart_buf, 0, sizeof(uart_buf));
+	        uart_pos = 0;
+	    }
+	    HAL_Delay(1);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
