@@ -1,6 +1,6 @@
 /* USER CODE BEGIN Header */
 /**
-  *****************************************************************************
+  ******************************************************************************
   * @file           : main.c
   * @brief          : Main program body
   ******************************************************************************
@@ -26,7 +26,7 @@
 #include "stm32f4xx_hal_flash.h"
 #include "stm32f4xx.h"
 #include <stdio.h>
-#include <string.h> // Для strncmp, strtok и других строковых функций
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -39,13 +39,13 @@ typedef struct {
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-// Определяем адрес во Flash памяти для хранения напряжения (последняя страница Flash)
-#define VOLTAGE_STORAGE_ADDR 0x080E0000 // Адрес Sector 11 (для STM32F405VG)
+#define VOLTAGE_STORAGE_ADDR 0x080E0000
 #define FLASH_SECTOR FLASH_SECTOR_11
 #define CS_LOW    GPIOC->BSRR = GPIO_BSRR_BR_8
 #define CS_HIGH   GPIOC->BSRR = GPIO_BSRR_BS_8
-// Переменная напряжения, размещенная во Flash памяти (только для чтения)
-__attribute__((section(".rodata"))) const float default_voltage = 3.3f; // Значение по умолчанию
+#define UART_BUF_SIZE 128
+#define LED_GPIO_Port GPIOC
+#define LED_Pin GPIO_PIN_13
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -54,30 +54,26 @@ __attribute__((section(".rodata"))) const float default_voltage = 3.3f; // Зн�
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+DAC_HandleTypeDef hdac;
 SPI_HandleTypeDef hspi3;
-
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 uint8_t usb_led_command = 0;
-
-// Объявляем внешние переменные из usbd_cdc_if.c
 extern volatile uint8_t usb_rx_buffer[64];
 extern volatile uint8_t new_data_received;
 
-DateTimeData app_data = {0};    // Данные от приложения
-DateTimeData backup_data = {0}; // Данные от дежурного МК
-uint8_t backup_data_valid = 0;  // Флаг валидности данных от дежурного МК
+DateTimeData app_data = {0};
+DateTimeData backup_data = {0};
+uint8_t backup_data_valid = 0;
 
-#define LED_GPIO_Port GPIOC
-#define LED_Pin GPIO_PIN_13
-
-// Добавляем новые переменные для UART
-#define UART_BUF_SIZE 128
 uint8_t uart_buf[UART_BUF_SIZE];
 uint16_t uart_pos = 0;
 volatile uint8_t uart_msg_ready = 0;
-uint8_t uart_byte; // Для приема по одному байту
+uint8_t uart_byte;
+
+float dac_voltage = 0.0f;
+uint32_t dac_last_update = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -85,8 +81,19 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_SPI3_Init(void);
-/* USER CODE BEGIN PFP */
+static void MX_DAC_Init(void);
+void Error_Handler(void);
 
+/* USER CODE BEGIN PFP */
+HAL_StatusTypeDef Write_Voltage_To_Flash(float voltage);
+float Read_Voltage_From_Flash(void);
+void Spi3_Init(void);
+uint16_t Spi3_Read_Data(void);
+float Read_Temperature(void);
+void Process_USB_Command(volatile uint8_t* data);
+void Process_UART_Data(uint8_t* data);
+void Send_To_Backup_MK(DateTimeData* data);
+void Set_DAC_Voltage(float voltage);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -95,19 +102,15 @@ HAL_StatusTypeDef Write_Voltage_To_Flash(float voltage) {
     HAL_StatusTypeDef status;
     uint32_t voltageData = *(uint32_t*)&voltage;
 
-    // Разблокировка Flash
     HAL_FLASH_Unlock();
-
-    // Очистка ошибок
     __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP | FLASH_FLAG_OPERR | FLASH_FLAG_WRPERR |
                           FLASH_FLAG_PGAERR | FLASH_FLAG_PGPERR | FLASH_FLAG_PGSERR);
 
-    // Стирание сектора
     FLASH_EraseInitTypeDef EraseInitStruct;
     EraseInitStruct.TypeErase = FLASH_TYPEERASE_SECTORS;
     EraseInitStruct.Sector = FLASH_SECTOR;
     EraseInitStruct.NbSectors = 1;
-    EraseInitStruct.VoltageRange = FLASH_VOLTAGE_RANGE_3; // Для работы при 2.7-3.6V
+    EraseInitStruct.VoltageRange = FLASH_VOLTAGE_RANGE_3;
 
     uint32_t SectorError;
     status = HAL_FLASHEx_Erase(&EraseInitStruct, &SectorError);
@@ -116,126 +119,93 @@ HAL_StatusTypeDef Write_Voltage_To_Flash(float voltage) {
         return status;
     }
 
-    // Запись данных
     status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, VOLTAGE_STORAGE_ADDR, voltageData);
     FLASH_WaitForLastOperation(100);
-
     HAL_FLASH_Lock();
     return status;
 }
 
-// Функция для чтения float из Flash
 float Read_Voltage_From_Flash() {
     uint32_t voltageData = *(__IO uint32_t*)(VOLTAGE_STORAGE_ADDR);
-
-    // Если Flash пуста (все 0xFF), возвращаем значение по умолчанию
     if (voltageData == 0xFFFFFFFF) {
-        return default_voltage;
+        return 3.3f;
     }
     return *(float*)&voltageData;
 }
 
-
-
 void Spi3_Init(void) {
-    // Включаем тактирование порта C и SPI3
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
     RCC->APB1ENR |= RCC_APB1ENR_SPI3EN;
 
-    // Настройка PC8 (CS) как выход
-    GPIOC->MODER |= GPIO_MODER_MODER8_0;  // Output mode
-    GPIOC->OTYPER &= ~GPIO_OTYPER_OT_8;   // Push-pull
-    GPIOC->OSPEEDR |= GPIO_OSPEEDR_OSPEED8; // High speed
+    GPIOC->MODER |= GPIO_MODER_MODER8_0;
+    GPIOC->OTYPER &= ~GPIO_OTYPER_OT_8;
+    GPIOC->OSPEEDR |= GPIO_OSPEEDR_OSPEED8;
 
-    // Настройка PC10 (SCK) и PC11 (MISO) как альтернативные функции
-    GPIOC->MODER |= GPIO_MODER_MODER10_1 | GPIO_MODER_MODER11_1; // Alternate function mode
-    GPIOC->AFR[1] |= (6 << (4*(10-8))) | (6 << (4*(11-8))); // AF6 for SPI3
+    GPIOC->MODER |= GPIO_MODER_MODER10_1 | GPIO_MODER_MODER11_1;
+    GPIOC->AFR[1] |= (6 << (4*(10-8))) | (6 << (4*(11-8)));
 
-    // Настройка SPI3
-    SPI3->CR1 = SPI_CR1_SSM |          // Software slave management
-                SPI_CR1_SSI |          // Internal slave select
-                SPI_CR1_MSTR |         // Master mode
-                SPI_CR1_BR_2 |         // Baud rate control: fPCLK/256
-                SPI_CR1_CPHA |         // CPHA = 1
-                SPI_CR1_DFF;           // 16-bit data format
-
-    SPI3->CR1 |= SPI_CR1_SPE;          // Enable SPI3
+    SPI3->CR1 = SPI_CR1_SSM | SPI_CR1_SSI | SPI_CR1_MSTR |
+               SPI_CR1_BR_2 | SPI_CR1_CPHA | SPI_CR1_DFF;
+    SPI3->CR1 |= SPI_CR1_SPE;
 }
 
 uint16_t Spi3_Read_Data(void) {
     uint16_t data = 0;
-
-    // Активируем Chip Select
     CS_LOW;
-
-    // Ждем, пока Tx буфер опустеет
     while(!(SPI3->SR & SPI_SR_TXE));
-
-    // Отправляем "пустые" данные для генерации тактовых импульсов
     SPI3->DR = 0x0000;
-
-    // Ждем, пока данные будут получены
     while(!(SPI3->SR & SPI_SR_RXNE));
-
-    // Считываем полученные данные
     data = SPI3->DR;
-
-    // Деактивируем Chip Select
     CS_HIGH;
-
     return data;
 }
 
 float Read_Temperature(void) {
     uint16_t raw_data = Spi3_Read_Data();
-
-    // Проверка на разрыв термопары (бит D2)
     if(raw_data & 0x04) {
-        return -1.0f; // Ошибка - разрыв термопары
+        return -1.0f;
     }
-
-    // Извлекаем 12-битное значение температуры (биты D15-D3)
     raw_data >>= 3;
-
-    // Преобразуем в градусы Цельсия (0.25°C на LSB)
     return raw_data * 0.25f;
+}
+
+void Set_DAC_Voltage(float voltage) {
+    if (voltage < 0) voltage = 0;
+    if (voltage > 1) voltage = 1;
+
+    uint32_t dac_value = (voltage / 3.3f) * 4095;
+    HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
+    HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
+    dac_voltage = voltage;
 }
 
 void Process_USB_Command(volatile uint8_t* data) {
     char response[64];
     static uint32_t led_off_time = 0;
 
-    // Обработка команды SETDATA
     if (strncmp((char*)data, "SETDATA=", 8) == 0) {
         char* comma_pos = strchr((char*)data + 8, ',');
         char* newline_pos = strchr((char*)data, '\n');
 
-        // Проверка формата
         if (!comma_pos || !newline_pos || comma_pos > newline_pos) {
             CDC_Transmit_FS((uint8_t*)"ERR: Bad format\n", 16);
             return;
         }
 
-        // Извлекаем дату
         size_t date_len = comma_pos - ((char*)data + 8);
         strncpy(app_data.date, (char*)data + 8, date_len);
         app_data.date[date_len] = '\0';
-
-        // Извлекаем период
         app_data.period = atoi(comma_pos + 1);
 
-        // Формируем подтверждение с принятыми данными
         snprintf(response, sizeof(response),
                 "ACK: Date=%s, Period=%lus\n",
                 app_data.date, app_data.period);
         CDC_Transmit_FS((uint8_t*)response, strlen(response));
         Send_To_Backup_MK(&app_data);
-
         return;
     }
-    // Команда измерения напряжения
     else if (data[0] == '1') {
-        float voltage_pa0 = 0.0f; // Здесь должны быть реальные измерения
+        float voltage_pa0 = 0.0f;
         float voltage_pa1 = 0.0f;
 
         snprintf(response, sizeof(response),
@@ -243,18 +213,15 @@ void Process_USB_Command(volatile uint8_t* data) {
                 voltage_pa0, voltage_pa1);
         CDC_Transmit_FS((uint8_t*)response, strlen(response));
     }
-    // Команда светодиода
     else if (data[0] == '2') {
         HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
         led_off_time = HAL_GetTick() + 5000;
         CDC_Transmit_FS((uint8_t*)"LED: ON 5s\n", 11);
     }
-    // Неизвестная команда
     else {
         CDC_Transmit_FS((uint8_t*)"ERR: Unknown cmd\n", 17);
     }
 
-    // Автовыключение светодиода
     if (led_off_time && HAL_GetTick() > led_off_time) {
         HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
         led_off_time = 0;
@@ -264,35 +231,29 @@ void Process_USB_Command(volatile uint8_t* data) {
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
     if(huart->Instance == USART1) {
         if(uart_byte == '\n' || uart_byte == '\r') {
-            // Завершаем строку только если получили какие-то данные
             if(uart_pos > 0) {
-                uart_buf[uart_pos] = '\0'; // Добавляем нуль-терминатор
-                uart_msg_ready = 1;       // Устанавливаем флаг готовности
+                uart_buf[uart_pos] = '\0';
+                uart_msg_ready = 1;
             }
-            // Всегда сбрасываем позицию для нового сообщения
             uart_pos = 0;
         }
-        else if(uart_byte >= 32 && uart_byte <= 126) { // Только печатные ASCII символы
-            if(uart_pos < UART_BUF_SIZE-1) { // Проверяем, чтобы не выйти за границы буфера
+        else if(uart_byte >= 32 && uart_byte <= 126) {
+            if(uart_pos < UART_BUF_SIZE-1) {
                 uart_buf[uart_pos++] = uart_byte;
             } else {
-                // Переполнение буфера - начинаем сначала
                 uart_pos = 0;
             }
         }
-        // Возобновляем прием
         HAL_UART_Receive_IT(&huart1, &uart_byte, 1);
     }
 }
 
 void Process_UART_Data(uint8_t* data) {
-    // Проверяем минимальную длину сообщения
-    if(strlen((char*)data) < 20) { // DATE:2000-01-01 = 14 символов минимум
+    if(strlen((char*)data) < 20) {
         CDC_Transmit_FS((uint8_t*)"ERR: Message too short\r\n", 24);
         return;
     }
 
-    // Ищем разделители в строгом порядке
     char* date_ptr = strstr((char*)data, "DATE:");
     char* time_ptr = date_ptr ? strstr(date_ptr, ";TIME:") : NULL;
     char* period_ptr = time_ptr ? strstr(time_ptr, ";PERIOD:") : NULL;
@@ -302,7 +263,6 @@ void Process_UART_Data(uint8_t* data) {
         return;
     }
 
-    // Парсим компоненты
     int year, month, day, hour, min, sec;
     unsigned long period;
 
@@ -313,7 +273,6 @@ void Process_UART_Data(uint8_t* data) {
         return;
     }
 
-    // Формируем и отправляем результат
     char usb_msg[128];
     snprintf(usb_msg, sizeof(usb_msg),
            "Date=%04d-%02d-%02d Time=%02d:%02d:%02d Period=%lus\r\n",
@@ -322,16 +281,11 @@ void Process_UART_Data(uint8_t* data) {
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
 }
 
-
-void Send_To_Backup_MK(DateTimeData* data)
-{
+void Send_To_Backup_MK(DateTimeData* data) {
     char uart_msg[64];
     snprintf(uart_msg, sizeof(uart_msg),
            "DATE:%s;TIME:%s;PERIOD:%lu\r\n",
-           data->date,  // Формат "YYYY-MM-DD"
-           data->date + 11, // Время "HH:MM:SS"
-           data->period);
-
+           data->date, data->date + 11, data->period);
     HAL_UART_Transmit(&huart1, (uint8_t*)uart_msg, strlen(uart_msg), 100);
 }
 /* USER CODE END 0 */
@@ -342,37 +296,19 @@ void Send_To_Backup_MK(DateTimeData* data)
   */
 int main(void)
 {
-
-  /* USER CODE BEGIN 1 */
-  /* USER CODE END 1 */
-
-  /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
-
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
   SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_USB_DEVICE_Init();
   MX_SPI3_Init();
+  MX_DAC_Init();
+
   /* USER CODE BEGIN 2 */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);  // Включаем транзистор
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
   Spi3_Init();
 
   float temperature = Read_Temperature();
-
   if(temperature < 0) {
       printf("Error: Thermocouple open!\n");
   } else {
@@ -380,34 +316,43 @@ int main(void)
   }
 
   HAL_Delay(1000);
-
-  // Добавляем инициализацию UART приема
   HAL_UART_Receive_IT(&huart1, &uart_byte, 1);
+  Set_DAC_Voltage(0.0f);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1){
-	    // Обработка USB данных
-	    if(new_data_received) {
-	        new_data_received = 0;
-	        Process_USB_Command(usb_rx_buffer);
-	        memset((void*)usb_rx_buffer, 0, sizeof(usb_rx_buffer)); // Очистка буфера
-	    }
+  while (1) {
+      if(new_data_received) {
+          new_data_received = 0;
+          Process_USB_Command(usb_rx_buffer);
+          memset((void*)usb_rx_buffer, 0, sizeof(usb_rx_buffer));
+      }
 
-	    if(uart_msg_ready) {
-	        uart_msg_ready = 0;
-	        char raw_msg[150];
-	        snprintf(raw_msg, sizeof(raw_msg), "UART RAW: %s\r\n", uart_buf);
-//	        CDC_Transmit_FS((uint8_t*)raw_msg, strlen(raw_msg));
-	        Process_UART_Data(uart_buf);
-	        memset(uart_buf, 0, sizeof(uart_buf));
-	        uart_pos = 0;
-	    }
-	    HAL_Delay(1);
-    /* USER CODE END WHILE */
+      if(uart_msg_ready) {
+          uart_msg_ready = 0;
+          Process_UART_Data(uart_buf);
+          memset(uart_buf, 0, sizeof(uart_buf));
+          uart_pos = 0;
+      }
 
-    /* USER CODE BEGIN 3 */
+      // Точное циклическое изменение напряжения каждые 3 секунды
+              if (HAL_GetTick() - dac_last_update > 3000) {
+                  dac_last_update = HAL_GetTick();
+
+                  if (dac_voltage < 0.1f) {          // Если ~0V
+                      Set_DAC_Voltage(0.300f);       // Устанавливаем точно 0.5V
+                  }
+                  else if (dac_voltage < 0.6f) {     // Если ~0.5V
+                      Set_DAC_Voltage(1.000f);       // Устанавливаем точно 1.0V
+                  }
+                  else {                             // Если ~1.0V
+                      Set_DAC_Voltage(0.000f);       // Сбрасываем в 0V
+                  }
+              }
+
+              HAL_Delay(1);
+
   }
   /* USER CODE END 3 */
 }
@@ -421,14 +366,9 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /** Configure the main internal regulator output voltage
-  */
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
@@ -442,8 +382,6 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -458,21 +396,35 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief DAC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_DAC_Init(void)
+{
+  DAC_ChannelConfTypeDef sConfig = {0};
+
+  hdac.Instance = DAC;
+  if (HAL_DAC_Init(&hdac) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  sConfig.DAC_Trigger = DAC_TRIGGER_NONE;
+  sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
+  if (HAL_DAC_ConfigChannel(&hdac, &sConfig, DAC_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
   * @brief SPI3 Initialization Function
   * @param None
   * @retval None
   */
 static void MX_SPI3_Init(void)
 {
-
-  /* USER CODE BEGIN SPI3_Init 0 */
-
-  /* USER CODE END SPI3_Init 0 */
-
-  /* USER CODE BEGIN SPI3_Init 1 */
-
-  /* USER CODE END SPI3_Init 1 */
-  /* SPI3 parameter configuration*/
   hspi3.Instance = SPI3;
   hspi3.Init.Mode = SPI_MODE_MASTER;
   hspi3.Init.Direction = SPI_DIRECTION_2LINES;
@@ -489,10 +441,6 @@ static void MX_SPI3_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN SPI3_Init 2 */
-
-  /* USER CODE END SPI3_Init 2 */
-
 }
 
 /**
@@ -502,14 +450,6 @@ static void MX_SPI3_Init(void)
   */
 static void MX_USART1_UART_Init(void)
 {
-
-  /* USER CODE BEGIN USART1_Init 0 */
-
-  /* USER CODE END USART1_Init 0 */
-
-  /* USER CODE BEGIN USART1_Init 1 */
-
-  /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
   huart1.Init.BaudRate = 9600;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
@@ -522,10 +462,6 @@ static void MX_USART1_UART_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART1_Init 2 */
-
-  /* USER CODE END USART1_Init 2 */
-
 }
 
 /**
@@ -536,39 +472,26 @@ static void MX_USART1_UART_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
 
-  /* USER CODE END MX_GPIO_Init_1 */
-
-  /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13|TH_CS_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : PC13 TH_CS_Pin */
   GPIO_InitStruct.Pin = GPIO_PIN_13|TH_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA5 */
   GPIO_InitStruct.Pin = GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-
-  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
@@ -581,13 +504,10 @@ static void MX_GPIO_Init(void)
   */
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
   }
-  /* USER CODE END Error_Handler_Debug */
 }
 
 #ifdef  USE_FULL_ASSERT
@@ -601,8 +521,6 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

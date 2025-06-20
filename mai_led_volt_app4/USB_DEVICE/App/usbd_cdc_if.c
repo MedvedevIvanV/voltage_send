@@ -264,19 +264,13 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
   * @param  Len: Number of data received (in bytes)
   * @retval Result of the operation: USBD_OK if all operations are OK else USBD_FAIL
   */
-// Замените обработчик приема:
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
-  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, Buf); // Должно быть ДО копирования!
-
-  if (*Len > 0 && *Len < APP_RX_DATA_SIZE) {
-      memcpy((void*)usb_rx_buffer, Buf, *Len);
-      usb_rx_buffer[*Len] = 0;
-      new_data_received = 1;
-  }
-
+  /* USER CODE BEGIN 6 */
+  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
-  return USBD_OK;
+  return (USBD_OK);
+  /* USER CODE END 6 */
 }
 
 /**
@@ -290,23 +284,18 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
   * @param  Len: Number of data to be sent (in bytes)
   * @retval USBD_OK if all operations are OK else USBD_FAIL or USBD_BUSY
   */
-uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len) {
-    uint8_t result = USBD_OK;
-    USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
-
-    if (hcdc->TxState != 0) {
-        return USBD_BUSY;
-    }
-
-    USBD_CDC_SetTxBuffer(&hUsbDeviceFS, Buf, Len);
-    result = USBD_CDC_TransmitPacket(&hUsbDeviceFS);
-
-    // Добавьте небольшую задержку, если нужно
-    if (result == USBD_OK) {
-        HAL_Delay(1);
-    }
-
-    return result;
+uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len)
+{
+  uint8_t result = USBD_OK;
+  /* USER CODE BEGIN 7 */
+  USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
+  if (hcdc->TxState != 0){
+    return USBD_BUSY;
+  }
+  USBD_CDC_SetTxBuffer(&hUsbDeviceFS, Buf, Len);
+  result = USBD_CDC_TransmitPacket(&hUsbDeviceFS);
+  /* USER CODE END 7 */
+  return result;
 }
 
 /**
