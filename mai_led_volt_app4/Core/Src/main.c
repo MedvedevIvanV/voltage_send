@@ -25,6 +25,7 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdio.h>
+#include <stdbool.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -36,20 +37,26 @@ typedef enum {
 } SPI_GPIO_State;
 
 typedef struct {
-  uint16_t data[10];         // Хранение 12-битных значений (используем 16 бит для удобства)
-  uint16_t current_word;     // Текущее принимаемое слово (12 бит)
-  uint8_t bit_counter;       // Счетчик битов (0-11)
-  uint8_t word_counter;      // Счетчик слов (0-9)
-  uint8_t last_sclk_state;   // Последнее состояние SCLK
-  uint8_t last_cs_state;     // Последнее состояние CS
+  uint16_t data[1000];        // Хранение 1000 12-битных значений
+  uint16_t current_word;      // Текущее принимаемое слово (12 бит)
+  uint8_t bit_counter;        // Счетчик битов (0-11)
+  uint16_t word_counter;      // Счетчик слов (0-999)
+  uint8_t last_sclk_state;    // Последнее состояние SCLK
+  uint8_t last_cs_state;      // Последнее состояние CS
 } SPI_Receiver;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define NUM_EXPECTED_WORDS 10  // Ожидаем 10 12-битных слов
-#define SPI_DATA_BITS 12       // Теперь работаем с 12 битами
-#define SPI_MODE 0             // CPOL=0, CPHA=0
+#define NUM_EXPECTED_WORDS 1000  // Ожидаем 1000 12-битных слов
+#define SPI_DATA_BITS 12         // Работаем с 12 битами
+#define SPI_MODE 0               // CPOL=0, CPHA=0
+#define VALUES_PER_LINE 10       // Количество значений в строке вывода
+
+// Настройки FLASH-памяти
+#define FLASH_TARGET_SECTOR FLASH_SECTOR_7  // Используем 7-й сектор (проверьте для вашего MCU)
+#define FLASH_TARGET_ADDR 0x08060000        // Адрес начала сектора (проверьте для вашего MCU)
+#define FLASH_DATA_SIZE (NUM_EXPECTED_WORDS * sizeof(uint16_t)) // Размер данных для сохранения
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -65,6 +72,7 @@ UART_HandleTypeDef huart1;
 SPI_Receiver spi_receiver;
 volatile SPI_GPIO_State spi_state = SPI_STATE_IDLE;
 char usb_msg[128];
+bool data_saved_to_flash = false; // Флаг сохранения данных в FLASH
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -77,27 +85,53 @@ static void MX_TIM3_Init(void);
 void ProcessSPI_GPIO(void);
 void PrintSPIData(void);
 void ResetSPIReceiver(void);
+bool SaveToFlash(uint16_t* data, uint32_t size);
+bool ReadFromFlash(uint16_t* data, uint32_t size);
+void EraseFlashSector(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/**
+  * @brief Сброс состояния SPI приемника
+  */
 void ResetSPIReceiver(void) {
   memset(&spi_receiver, 0, sizeof(spi_receiver));
   spi_receiver.last_sclk_state = (SPI_MODE == 0 || SPI_MODE == 2) ? 0 : 1;
   spi_state = SPI_STATE_IDLE;
+  data_saved_to_flash = false;
 }
 
+/**
+  * @brief Вывод данных SPI через USB
+  */
 void PrintSPIData(void) {
-  snprintf(usb_msg, sizeof(usb_msg), "SPI Data (12-bit): ");
-  for (int i = 0; i < NUM_EXPECTED_WORDS; i++) {
-    char word_str[8];
-    snprintf(word_str, sizeof(word_str), "%04X ", spi_receiver.data[i] & 0xFFF); // Маска для 12 бит
-    strncat(usb_msg, word_str, sizeof(usb_msg) - strlen(usb_msg) - 1);
+  uint16_t flash_data[NUM_EXPECTED_WORDS];
+
+  // Сначала пытаемся прочитать данные из FLASH
+  if (ReadFromFlash(flash_data, FLASH_DATA_SIZE)) {
+    for (int i = 0; i < NUM_EXPECTED_WORDS; i += VALUES_PER_LINE) {
+      snprintf(usb_msg, sizeof(usb_msg), "FLASH Data: ");
+      int end = (i + VALUES_PER_LINE) < NUM_EXPECTED_WORDS ? (i + VALUES_PER_LINE) : NUM_EXPECTED_WORDS;
+
+      for (int j = i; j < end; j++) {
+        char word_str[8];
+        snprintf(word_str, sizeof(word_str), "%04X ", flash_data[j] & 0xFFF); // Маска для 12 бит
+        strncat(usb_msg, word_str, sizeof(usb_msg) - strlen(usb_msg) - 1);
+      }
+      strncat(usb_msg, "\r\n", sizeof(usb_msg) - strlen(usb_msg) - 1);
+      CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+      HAL_Delay(10); // Небольшая задержка для USB
+    }
+  } else {
+    snprintf(usb_msg, sizeof(usb_msg), "Failed to read data from FLASH!\r\n");
+    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
   }
-  strncat(usb_msg, "\r\n", sizeof(usb_msg) - strlen(usb_msg) - 1);
-  CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
 }
 
+/**
+  * @brief Обработка SPI через GPIO (битбэнг)
+  */
 void ProcessSPI_GPIO(void) {
     uint8_t current_cs = HAL_GPIO_ReadPin(CS_GPIO_Port, CS_Pin);
     uint8_t current_sclk = HAL_GPIO_ReadPin(SCLK_GPIO_Port, SCLK_Pin);
@@ -134,6 +168,76 @@ void ProcessSPI_GPIO(void) {
     spi_receiver.last_sclk_state = current_sclk;
     spi_receiver.last_cs_state = current_cs;
 }
+
+/**
+  * @brief Стирание сектора FLASH
+  */
+void EraseFlashSector(void) {
+    FLASH_EraseInitTypeDef erase_init;
+    uint32_t sector_error = 0;
+
+    HAL_FLASH_Unlock(); // Разблокируем FLASH для записи
+
+    erase_init.TypeErase = FLASH_TYPEERASE_SECTORS;
+    erase_init.Sector = FLASH_TARGET_SECTOR;
+    erase_init.NbSectors = 1;
+    erase_init.VoltageRange = FLASH_VOLTAGE_RANGE_3;
+
+    if (HAL_FLASHEx_Erase(&erase_init, &sector_error) != HAL_OK) {
+        // Ошибка стирания
+        snprintf(usb_msg, sizeof(usb_msg), "FLASH erase failed!\r\n");
+        CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    }
+
+    HAL_FLASH_Lock(); // Блокируем FLASH после записи
+}
+
+/**
+  * @brief Сохранение данных во FLASH
+  * @param data Указатель на данные
+  * @param size Размер данных в байтах
+  * @return true если успешно, false если ошибка
+  */
+bool SaveToFlash(uint16_t* data, uint32_t size) {
+    uint32_t address = FLASH_TARGET_ADDR;
+    uint32_t num_words = size / sizeof(uint16_t);
+
+    // Сначала стираем сектор
+    EraseFlashSector();
+
+    HAL_FLASH_Unlock(); // Разблокируем FLASH для записи
+
+    // Записываем данные по полусловам (16 бит)
+    for (uint32_t i = 0; i < num_words; i++) {
+        if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_HALFWORD, address, data[i]) != HAL_OK) {
+            HAL_FLASH_Lock(); // Блокируем FLASH в случае ошибки
+            return false;
+        }
+        address += sizeof(uint16_t);
+    }
+
+    HAL_FLASH_Lock(); // Блокируем FLASH после записи
+    return true;
+}
+
+/**
+  * @brief Чтение данных из FLASH
+  * @param data Указатель на буфер для данных
+  * @param size Размер данных в байтах
+  * @return true если успешно, false если ошибка
+  */
+bool ReadFromFlash(uint16_t* data, uint32_t size) {
+    uint32_t address = FLASH_TARGET_ADDR;
+    uint32_t num_words = size / sizeof(uint16_t);
+
+    // Просто копируем данные из FLASH в RAM
+    for (uint32_t i = 0; i < num_words; i++) {
+        data[i] = *(__IO uint16_t*)address;
+        address += sizeof(uint16_t);
+    }
+
+    return true;
+}
 /* USER CODE END 0 */
 
 /**
@@ -166,6 +270,10 @@ int main(void)
   HAL_TIM_Base_Start(&htim3);
   ResetSPIReceiver();
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET); // LED off
+
+  // Выводим сообщение о готовности
+  snprintf(usb_msg, sizeof(usb_msg), "System initialized. Waiting for SPI data...\r\n");
+  CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -174,7 +282,18 @@ int main(void)
   {
     ProcessSPI_GPIO();
 
-    if (spi_state == SPI_STATE_COMPLETE) {
+    if (spi_state == SPI_STATE_COMPLETE && !data_saved_to_flash) {
+      // Сохраняем данные в FLASH перед выводом
+      if (SaveToFlash(spi_receiver.data, FLASH_DATA_SIZE)) {
+        data_saved_to_flash = true;
+        snprintf(usb_msg, sizeof(usb_msg), "Data saved to FLASH successfully!\r\n");
+        CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+      } else {
+        snprintf(usb_msg, sizeof(usb_msg), "Failed to save data to FLASH!\r\n");
+        CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+      }
+
+      // Выводим данные из FLASH
       PrintSPIData();
       ResetSPIReceiver();
       HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13); // Toggle LED on complete
@@ -187,6 +306,8 @@ int main(void)
   /* USER CODE END 3 */
 }
 
+// Остальной код (SystemClock_Config, MX_GPIO_Init, MX_USART1_UART_Init, MX_DAC_Init, MX_TIM3_Init, Error_Handler)
+// остается без изменений, как в вашем исходном коде
 /**
   * @brief System Clock Configuration
   * @retval None
