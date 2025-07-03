@@ -37,10 +37,10 @@ typedef enum {
 } SPI_GPIO_State;
 
 typedef struct {
-  uint16_t data[1000];        // Хранение 1000 12-битных значений
+  uint16_t data[10000];       // Хранение 10000 12-битных значений (обновлено с 5000)
   uint16_t current_word;      // Текущее принимаемое слово (12 бит)
   uint8_t bit_counter;        // Счетчик битов (0-11)
-  uint16_t word_counter;      // Счетчик слов (0-999)
+  uint16_t word_counter;      // Счетчик слов (0-9999) (обновлено)
   uint8_t last_sclk_state;    // Последнее состояние SCLK
   uint8_t last_cs_state;      // Последнее состояние CS
 } SPI_Receiver;
@@ -48,7 +48,7 @@ typedef struct {
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define NUM_EXPECTED_WORDS 1000  // Ожидаем 1000 12-битных слов
+#define NUM_EXPECTED_WORDS 10000  // Ожидаем 10000 12-битных слов (обновлено)
 #define SPI_DATA_BITS 12         // Работаем с 12 битами
 #define SPI_MODE 0               // CPOL=0, CPHA=0
 #define VALUES_PER_LINE 10       // Количество значений в строке вывода
@@ -56,7 +56,7 @@ typedef struct {
 // Настройки FLASH-памяти
 #define FLASH_TARGET_SECTOR FLASH_SECTOR_7  // Используем 7-й сектор (проверьте для вашего MCU)
 #define FLASH_TARGET_ADDR 0x08060000        // Адрес начала сектора (проверьте для вашего MCU)
-#define FLASH_DATA_SIZE (NUM_EXPECTED_WORDS * sizeof(uint16_t)) // Размер данных для сохранения
+#define FLASH_DATA_SIZE (NUM_EXPECTED_WORDS * sizeof(uint16_t)) // Размер данных для сохранения (обновлено)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -111,12 +111,14 @@ void PrintSPIData(void) {
   // Сначала пытаемся прочитать данные из FLASH
   if (ReadFromFlash(flash_data, FLASH_DATA_SIZE)) {
     for (int i = 0; i < NUM_EXPECTED_WORDS; i += VALUES_PER_LINE) {
-      snprintf(usb_msg, sizeof(usb_msg), "FLASH Data: ");
-      int end = (i + VALUES_PER_LINE) < NUM_EXPECTED_WORDS ? (i + VALUES_PER_LINE) : NUM_EXPECTED_WORDS;
+      int start_idx = i;
+      int end_idx = (i + VALUES_PER_LINE) < NUM_EXPECTED_WORDS ? (i + VALUES_PER_LINE - 1) : (NUM_EXPECTED_WORDS - 1);
 
-      for (int j = i; j < end; j++) {
+      snprintf(usb_msg, sizeof(usb_msg), "FLASH Data [%04d-%04d]: ", start_idx, end_idx);
+
+      for (int j = i; j < i + VALUES_PER_LINE && j < NUM_EXPECTED_WORDS; j++) {
         char word_str[8];
-        snprintf(word_str, sizeof(word_str), "%04X ", flash_data[j] & 0xFFF); // Маска для 12 бит
+        snprintf(word_str, sizeof(word_str), "%4d ", flash_data[j] & 0xFFF); // Маска для 12 бит и вывод в десятичной системе
         strncat(usb_msg, word_str, sizeof(usb_msg) - strlen(usb_msg) - 1);
       }
       strncat(usb_msg, "\r\n", sizeof(usb_msg) - strlen(usb_msg) - 1);
@@ -271,8 +273,8 @@ int main(void)
   ResetSPIReceiver();
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET); // LED off
 
-  // Выводим сообщение о готовности
-  snprintf(usb_msg, sizeof(usb_msg), "System initialized. Waiting for SPI data...\r\n");
+  // Выводим сообщение о готовности (обновлено для 10000 значений)
+  snprintf(usb_msg, sizeof(usb_msg), "System initialized. Waiting for SPI data (10000 values)...\r\n");
   CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
   /* USER CODE END 2 */
 
@@ -286,7 +288,7 @@ int main(void)
       // Сохраняем данные в FLASH перед выводом
       if (SaveToFlash(spi_receiver.data, FLASH_DATA_SIZE)) {
         data_saved_to_flash = true;
-        snprintf(usb_msg, sizeof(usb_msg), "Data saved to FLASH successfully!\r\n");
+        snprintf(usb_msg, sizeof(usb_msg), "10000 values saved to FLASH successfully!\r\n");
         CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
       } else {
         snprintf(usb_msg, sizeof(usb_msg), "Failed to save data to FLASH!\r\n");
@@ -305,7 +307,6 @@ int main(void)
   }
   /* USER CODE END 3 */
 }
-
 // Остальной код (SystemClock_Config, MX_GPIO_Init, MX_USART1_UART_Init, MX_DAC_Init, MX_TIM3_Init, Error_Handler)
 // остается без изменений, как в вашем исходном коде
 /**
