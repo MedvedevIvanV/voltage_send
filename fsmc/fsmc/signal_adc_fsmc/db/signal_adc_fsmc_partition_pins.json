@@ -1,0 +1,77 @@
+{
+	"partitions" : [
+		{
+			"name" : "Top",
+			"pins" : [
+				{
+					"name" : "FSMC_D[0]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[1]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[2]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[3]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[4]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[5]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[6]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[7]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[8]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[9]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[10]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[11]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[12]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[13]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[14]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[15]",
+					"strict" : false
+				},
+				{
+					"name" : "FGPA_OE",
+					"strict" : false
+				}
+			]
+		}
+	]
+}

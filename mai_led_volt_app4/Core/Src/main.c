@@ -15,9 +15,9 @@
   * - FSMC_NOE to FPGA_OE (read enable)
   * - FSMC_NWE to FPGA_WE (write enable, not used in this case)
   * - FSMC_NE1 to FPGA chip select
-  * - PD6 to FPGA START_FPGA signal
   */
 /* USER CODE END Header */
+
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "usb_device.h"
@@ -34,21 +34,20 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-#define FPGA_FIFO_SIZE 100       // Размер FIFO в ПЛИС (должен соответствовать коду ПЛИС)
-#define VALUES_PER_LINE 10       // Количество значений в строке вывода
+#define DATA_VALUES_COUNT 10       // Количество значений в ПЛИС (должен соответствовать коду ПЛИС)
+#define VALUES_PER_LINE 10         // Количество значений в строке вывода
 
 typedef struct {
-    uint16_t data[FPGA_FIFO_SIZE]; // Буфер для хранения данных от ПЛИС
-    bool data_ready;               // Флаг готовности данных
-    uint8_t data_count;            // Количество считанных данных
+    uint16_t data[DATA_VALUES_COUNT]; // Буфер для хранения данных от ПЛИС
+    bool data_ready;                  // Флаг готовности данных
+    uint8_t data_count;               // Количество считанных данных
 } FPGA_Data;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define FPGA_BASE_ADDRESS 0x60000000  // Базовый адрес Bank1 (NE1)
-#define START_PULSE_DURATION_MS 1     // Длительность импульса START в мс
-#define MEASUREMENT_INTERVAL_MS 5000  // Интервал между измерениями в мс
+#define MEASUREMENT_INTERVAL_MS 3000  // Интервал между измерениями в мс (соответствует ПЛИС)
 
 // Адрес во Flash-памяти для хранения напряжения
 #define VOLTAGE_STORAGE_ADDR 0x080E0000
@@ -88,7 +87,6 @@ static void MX_DAC_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_FSMC_Init(void);
 /* USER CODE BEGIN PFP */
-void GenerateStartPulse(void);
 void ReadFPGAData(void);
 void PrintDataToUSB(void);
 void SendUSBDebugMessage(const char *message);
@@ -102,42 +100,27 @@ void Set_DAC_Voltage(float voltage);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 /**
-  * @brief Генерация импульса START для запуска измерения в ПЛИС
-  * @note Импульс длительностью 1 мс на выводе PD6 (START_FPGA)
-  */
-void GenerateStartPulse(void) {
-    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
-    HAL_Delay(START_PULSE_DURATION_MS);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_RESET);
-}
-
-/**
   * @brief Чтение данных из ПЛИС через FSMC интерфейс
-  * @note Читает всю FIFO из ПЛИС (100 значений по 12 бит)
+  * @note Читает 10 значений по 12 бит из ПЛИС (каждое значение в старших 12 битах 16-битного слова)
   */
 void ReadFPGAData(void) {
     fpga_data.data_count = 0;
-    uint16_t test_value = fpga_reg[0]; // Читаем первое значение для теста
+    fpga_data.data_ready = false;
 
-    snprintf(usb_msg, sizeof(usb_msg), "First read value: 0x%04X", test_value);
-    SendUSBDebugMessage(usb_msg);
+    __disable_irq();
 
-    for (int i = 0; i < FPGA_FIFO_SIZE; i++) {
-        uint16_t value = fpga_reg[i];
+    for (int i = 0; i < DATA_VALUES_COUNT; i++) {
+        // Просто читаем значение - ПЛИС само должно переключаться на следующее
+        uint16_t value = fpga_reg[0];
+        fpga_data.data[i] = value & 0x0FFF;
+        fpga_data.data_count++;
 
-        snprintf(usb_msg, sizeof(usb_msg), "Read[%d]: 0x%04X", i, value);
-        SendUSBDebugMessage(usb_msg);
-
-        if ((value & 0x0FFF) != 0x0FFF) {
-            fpga_data.data[i] = value & 0x0FFF;
-            fpga_data.data_count++;
-        } else {
-            break;
-        }
+        // Небольшая задержка между чтениями
+        for(volatile int j = 0; j < 10; j++);
     }
-    fpga_data.data_ready = (fpga_data.data_count > 0);
+
+    __enable_irq();
+    fpga_data.data_ready = true;
 }
 
 /**
@@ -146,24 +129,25 @@ void ReadFPGAData(void) {
 void PrintDataToUSB(void) {
     if (!fpga_data.data_ready) return;
 
-    for (int i = 0; i < fpga_data.data_count; i += VALUES_PER_LINE) {
-        int start_idx = i;
-        int end_idx = (i + VALUES_PER_LINE - 1) < fpga_data.data_count ?
-                      (i + VALUES_PER_LINE - 1) : (fpga_data.data_count - 1);
+    // Формируем заголовок
+    snprintf(usb_msg, sizeof(usb_msg), "FPGA Data [0-%d]:\r\n", DATA_VALUES_COUNT-1);
+    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    HAL_Delay(10);
 
-        // Формируем строку с данными
-        snprintf(usb_msg, sizeof(usb_msg), "Data [%03d-%03d]: ", start_idx, end_idx);
+    // Формируем строку с данными
+    char data_line[64] = "";
+    for (int i = 0; i < DATA_VALUES_COUNT; i++) {
+        char val_str[8];
+        snprintf(val_str, sizeof(val_str), "%4d ", fpga_data.data[i]);
+        strncat(data_line, val_str, sizeof(data_line) - strlen(data_line) - 1);
 
-        // Добавляем значения в строку
-        for (int j = i; j <= end_idx; j++) {
-            char val_str[8];
-            snprintf(val_str, sizeof(val_str), "%4d ", fpga_data.data[j]);
-            strncat(usb_msg, val_str, sizeof(usb_msg) - strlen(usb_msg) - 1);
+        // Если строка заполнена или это последнее значение
+        if ((i+1) % VALUES_PER_LINE == 0 || i == DATA_VALUES_COUNT-1) {
+            strncat(data_line, "\r\n", sizeof(data_line) - strlen(data_line) - 1);
+            CDC_Transmit_FS((uint8_t*)data_line, strlen(data_line));
+            HAL_Delay(10);
+            data_line[0] = '\0'; // Очищаем строку
         }
-
-        strncat(usb_msg, "\r\n", sizeof(usb_msg) - strlen(usb_msg) - 1);
-        CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
-        HAL_Delay(10); // Задержка для стабильной работы USB
     }
 }
 
@@ -174,6 +158,7 @@ void PrintDataToUSB(void) {
 void SendUSBDebugMessage(const char *message) {
     snprintf(usb_msg, sizeof(usb_msg), "[%lu] %s\r\n", HAL_GetTick(), message);
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    HAL_Delay(10); // Задержка для стабильной работы USB
 }
 
 /**
@@ -183,16 +168,12 @@ void SendUSBDebugMessage(const char *message) {
   */
 HAL_StatusTypeDef Write_Voltage_To_Flash(float voltage) {
     HAL_StatusTypeDef status;
-    // Преобразуем float в uint32_t для записи
     uint32_t voltageData = *(uint32_t*)&voltage;
 
-    // Разблокируем Flash для записи
     HAL_FLASH_Unlock();
-    // Очищаем флаги ошибок
     __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP | FLASH_FLAG_OPERR | FLASH_FLAG_WRPERR |
                           FLASH_FLAG_PGAERR | FLASH_FLAG_PGPERR | FLASH_FLAG_PGSERR);
 
-    // Настраиваем структуру для стирания сектора
     FLASH_EraseInitTypeDef EraseInitStruct;
     EraseInitStruct.TypeErase = FLASH_TYPEERASE_SECTORS;
     EraseInitStruct.Sector = FLASH_SECTOR;
@@ -200,18 +181,14 @@ HAL_StatusTypeDef Write_Voltage_To_Flash(float voltage) {
     EraseInitStruct.VoltageRange = FLASH_VOLTAGE_RANGE_3;
 
     uint32_t SectorError;
-    // Стираем сектор перед записью
     status = HAL_FLASHEx_Erase(&EraseInitStruct, &SectorError);
     if (status != HAL_OK) {
         HAL_FLASH_Lock();
         return status;
     }
 
-    // Записываем значение напряжения
     status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, VOLTAGE_STORAGE_ADDR, voltageData);
-    // Ожидаем завершения операции
     FLASH_WaitForLastOperation(100);
-    // Блокируем Flash
     HAL_FLASH_Lock();
     return status;
 }
@@ -221,13 +198,10 @@ HAL_StatusTypeDef Write_Voltage_To_Flash(float voltage) {
   * @retval Прочитанное значение напряжения (3.3V по умолчанию, если данные невалидны)
   */
 float Read_Voltage_From_Flash() {
-    // Читаем данные как 32-битное целое
     uint32_t voltageData = *(__IO uint32_t*)(VOLTAGE_STORAGE_ADDR);
-    // Проверяем, не является ли значение "пустым" (0xFFFFFFFF)
     if (voltageData == 0xFFFFFFFF) {
-        return 3.3f;  // Возвращаем значение по умолчанию
+        return 3.3f;
     }
-    // Преобразуем обратно в float и возвращаем
     return *(float*)&voltageData;
 }
 
@@ -236,23 +210,13 @@ float Read_Voltage_From_Flash() {
   * @param voltage: Значение напряжения для установки (от 0.0 до 3.3)
   */
 void Set_DAC_Voltage(float voltage) {
-    // Ограничиваем значение напряжения в допустимом диапазоне
     if (voltage < 0) voltage = 0;
     if (voltage > 3.3f) voltage = 3.3f;
 
-    // Преобразуем напряжение в 12-битное значение DAC
     uint32_t dac_value = (voltage / 3.3f) * 4095;
-
-    // Устанавливаем значение на DAC
     HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
-    // Включаем DAC
     HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
-
-    // Сохраняем текущее значение напряжения
     dac_voltage = voltage;
-
-    // Сохраняем значение в Flash (по желанию)
-    // Write_Voltage_To_Flash(voltage);
 }
 /* USER CODE END 0 */
 
@@ -303,6 +267,7 @@ int main(void)
 
     // Сообщение о готовности системы
     SendUSBDebugMessage("System initialized. Ready to communicate with FPGA...");
+    SendUSBDebugMessage("FPGA generates data automatically every 3 seconds");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -313,28 +278,12 @@ int main(void)
         // Циклическое изменение напряжения DAC каждые 3 секунды
         if (current_time - dac_last_update > 3000) {
             dac_last_update = current_time;
-
-            if (dac_voltage < 0.1f) {          // Если ~0V
-                Set_DAC_Voltage(0.300f);       // Устанавливаем точно 0.3V
-            }
-            else if (dac_voltage < 0.6f) {     // Если ~0.3V
-                Set_DAC_Voltage(1.000f);       // Устанавливаем точно 1.0V
-            }
-            else {                             // Если ~1.0V
-                Set_DAC_Voltage(0.000f);       // Сбрасываем в 0V
-            }
+            Set_DAC_Voltage((dac_voltage < 1.65f) ? 3.3f : 0.0f);
         }
 
-        // Проверяем, прошло ли достаточно времени с последнего измерения
+        // Проверяем, прошло ли 3 секунды с последнего измерения
         if ((current_time - last_measurement_time) >= MEASUREMENT_INTERVAL_MS) {
-            SendUSBDebugMessage("Starting new measurement cycle...");
-
-            // Генерируем стартовый импульс для ПЛИС
-            GenerateStartPulse();
-            SendUSBDebugMessage("START pulse sent to FPGA");
-
-            // Ждем пока ПЛИС заполнит FIFO (задержка должна соответствовать коду ПЛИС)
-            HAL_Delay(100);
+            SendUSBDebugMessage("Reading data from FPGA...");
 
             // Читаем данные из ПЛИС
             ReadFPGAData();
@@ -344,8 +293,6 @@ int main(void)
                 SendUSBDebugMessage("Data received from FPGA:");
                 PrintDataToUSB();
                 fpga_data.data_ready = false;
-            } else {
-                SendUSBDebugMessage("No data received from FPGA!");
             }
 
             last_measurement_time = current_time;
@@ -358,6 +305,10 @@ int main(void)
   }
   /* USER CODE END 3 */
 }
+
+/* Остальной код остается без изменений */
+/* Остальной код (SystemClock_Config, MX_DAC_Init, MX_TIM3_Init, MX_USART1_UART_Init,
+   MX_GPIO_Init, MX_FSMC_Init, Error_Handler) остается без изменений */
 
 /**
   * @brief System Clock Configuration

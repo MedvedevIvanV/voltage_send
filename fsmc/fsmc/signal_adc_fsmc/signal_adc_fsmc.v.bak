@@ -1,0 +1,218 @@
+module signal_adc_fsmc (
+    input clk_20mhz,
+    input START_FPGA,
+    output CLK_P,    
+    output EMA_PULSE_N,
+    output EMA_PULSE_P,
+    output ON_32,
+    output CTRL_SW,
+    input [11:0] adc_data,
+    input adc_dv,
+    input DCLK,          // Тактовый сигнал от АЦП
+                
+    // === FSMC Interface ===
+    input FGPA_OE,       // FSMC_NOE (активный низкий)
+    input FGPA_WE,       // FSMC_NWE (активный низкий)
+    inout [15:0] FSMC_D,
+    input FGPA_CLE,      // Не используется, но оставлен для совместимости
+    input FGPA_ALE       // Не используется, но оставлен для совместимости
+);
+
+// ================== PLL для генерации 80 МГц ==================
+wire clk_80mhz;
+wire pll_locked;
+
+pll_20_to_80 pll_inst (
+    .inclk0(clk_20mhz),
+    .c0(clk_80mhz),
+    .locked(pll_locked)
+);
+
+assign CLK_P = clk_80mhz;
+
+// ================== Signal Generator ==================
+reg [23:0] counter = 0;
+reg start_sync1 = 0;
+reg start_sync2 = 0;
+reg measurement_active = 0;
+
+// Синхронизация START_FPGA в домен DCLK
+always @(posedge DCLK) begin
+    if (!pll_locked) begin
+        start_sync1 <= 0;
+        start_sync2 <= 0;
+    end else begin
+        start_sync1 <= START_FPGA;
+        start_sync2 <= start_sync1;
+    end
+end
+
+// Основной счетчик
+always @(posedge DCLK) begin
+    if (!pll_locked) begin
+        counter <= 24'd0;
+        measurement_active <= 1'b0;
+    end else if (start_sync2 && !measurement_active) begin
+        counter <= 24'd0;
+        measurement_active <= 1'b1;
+    end else if (measurement_active) begin
+        if (counter < 24'hFFFFFF) begin
+            counter <= counter + 24'd1;
+        end else begin
+            measurement_active <= 1'b0;
+        end
+    end
+end
+
+// Генерация сигнала EMA_PULSE_P
+reg ema_pulse_p_reg = 1;
+always @(posedge DCLK) begin
+    if (!pll_locked || !measurement_active) begin
+        ema_pulse_p_reg <= 1;
+    end else begin
+        case (counter)
+            24'd6400000: ema_pulse_p_reg <= 0;
+            24'd6400010: ema_pulse_p_reg <= 1;
+            24'd6400023: ema_pulse_p_reg <= 0;
+            24'd6400033: ema_pulse_p_reg <= 1;
+            default: ; // Сохраняем текущее значение
+        endcase
+    end
+end
+assign EMA_PULSE_P = ema_pulse_p_reg;
+
+// Генерация сигнала EMA_PULSE_N
+reg ema_pulse_n_reg = 1;
+always @(posedge DCLK) begin
+    if (!pll_locked || !measurement_active) begin
+        ema_pulse_n_reg <= 1;
+    end else begin
+        case (counter)
+            24'd6400010: ema_pulse_n_reg <= 0;
+            24'd6400020: ema_pulse_n_reg <= 1;
+            24'd6400033: ema_pulse_n_reg <= 0;
+            24'd6400043: ema_pulse_n_reg <= 1;
+            default: ; // Сохраняем текущее значение
+        endcase
+    end
+end
+assign EMA_PULSE_N = ema_pulse_n_reg;
+
+// Генерация сигнала ON_32
+reg on_32_reg = 1;
+always @(posedge DCLK) begin
+    if (!pll_locked) begin
+        on_32_reg <= 1;
+    end else if (!measurement_active) begin
+        on_32_reg <= 1;
+    end else begin
+        if (counter < 24'd1) begin
+            on_32_reg <= 1;
+        end else if (counter < 24'd6400043) begin
+            on_32_reg <= 0;
+        end else begin
+            on_32_reg <= 1;
+        end
+    end
+end
+assign ON_32 = on_32_reg;
+
+// Генерация сигнала CTRL_SW
+reg ctrl_sw_reg = 0;
+always @(posedge DCLK) begin
+    if (!pll_locked) begin
+        ctrl_sw_reg <= 0;
+    end else if (!measurement_active) begin
+        ctrl_sw_reg <= 0;
+    end else begin
+        if (counter < 24'd6399999) begin
+            ctrl_sw_reg <= 0;
+        end else if (counter < 24'd6400203) begin
+            ctrl_sw_reg <= 1;
+        end else begin
+            ctrl_sw_reg <= 0;
+        end
+    end
+end
+assign CTRL_SW = ctrl_sw_reg;
+
+// ================== FIFO для хранения данных ==================
+parameter FIFO_DEPTH = 10000;
+(* ramstyle = "no_rw_check" *) reg [11:0] adc_fifo [0:FIFO_DEPTH-1];
+reg [15:0] fifo_wr_ptr = 0;
+reg [15:0] fifo_rd_ptr = 0;
+reg fifo_full = 0;
+reg fifo_empty = 1;
+
+// Синхронизация сигналов FSMC в домен DCLK
+reg fsmc_oe_sync1, fsmc_oe_sync2;
+
+always @(posedge DCLK or negedge pll_locked) begin
+    if (!pll_locked) begin
+        fsmc_oe_sync1 <= 1'b1;
+        fsmc_oe_sync2 <= 1'b1;
+    end else begin
+        fsmc_oe_sync1 <= FGPA_OE;
+        fsmc_oe_sync2 <= fsmc_oe_sync1;
+    end
+end
+
+// ================== Управление двунаправленной шиной ==================
+reg [15:0] fsmc_out;
+reg fsmc_dir; // Направление: 1 - ПЛИС -> STM, 0 - STM -> ПЛИС
+
+// Трехстабиный буфер для шины данных
+assign FSMC_D = (!fsmc_oe_sync2 && fsmc_dir) ? fsmc_out : 16'hZZZZ;
+
+// Объединенный блок управления FIFO и FSMC интерфейсом
+always @(posedge DCLK) begin
+    if (!pll_locked) begin
+        // Сброс при отсутствии блокировки PLL
+        fifo_wr_ptr <= 0;
+        fifo_rd_ptr <= 0;
+        fifo_full <= 0;
+        fifo_empty <= 1;
+        fsmc_out <= 16'h0000;
+        fsmc_dir <= 0;
+    end else begin
+        // Запись в FIFO
+        if (adc_dv && measurement_active && (counter >= 24'd6400000) && (counter < 24'd6410000) && !fifo_full) begin
+            adc_fifo[fifo_wr_ptr] <= adc_data;
+            fifo_wr_ptr <= (fifo_wr_ptr == (FIFO_DEPTH-1)) ? 0 : fifo_wr_ptr + 1;
+            fifo_empty <= 0;
+            
+            if (fifo_wr_ptr == (FIFO_DEPTH-1)) begin
+                fifo_full <= 1;
+            end
+        end
+        
+        // Сброс FIFO при новом запуске
+        if (start_sync2 && !measurement_active) begin
+            fifo_wr_ptr <= 0;
+            fifo_rd_ptr <= 0;
+            fifo_full <= 0;
+            fifo_empty <= 1;
+        end
+        
+        // Чтение из FIFO
+        if (!fsmc_oe_sync2) begin
+            if (!fifo_empty) begin
+                fsmc_out <= {4'b0000, adc_fifo[fifo_rd_ptr]};
+                fsmc_dir <= 1;
+                fifo_rd_ptr <= (fifo_rd_ptr == (FIFO_DEPTH-1)) ? 0 : fifo_rd_ptr + 1;
+                
+                if (fifo_rd_ptr == (FIFO_DEPTH-1)) begin
+                    fifo_empty <= 1;
+                end
+                fifo_full <= 0;
+            end else begin
+                fsmc_out <= 16'hFFFF;
+                fsmc_dir <= 1;
+            end
+        end else begin
+            fsmc_dir <= 0;
+        end
+    end
+end
+
+endmodule

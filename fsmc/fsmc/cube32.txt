@@ -1,0 +1,10 @@
+#define FSMC_ADDR ((volatile uint16_t*)0x60000000)
+
+void ReadData() {
+    uint16_t received_data[10];
+    
+    for (int i = 0; i < 10; i++) {
+        received_data[i] = *FSMC_ADDR; // Каждое чтение инициирует передачу нового значения
+        HAL_Delay(10); // Небольшая задержка между чтениями
+    }
+}

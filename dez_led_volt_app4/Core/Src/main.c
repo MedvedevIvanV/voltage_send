@@ -331,7 +331,9 @@ int main(void)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(LED_PORT, &GPIO_InitStruct);
     HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
-
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);  // Включаем транзистор
+    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);  // Включить светодиод
     if(!is_rtc_initialized()) {
         initialize_rtc();
     }
