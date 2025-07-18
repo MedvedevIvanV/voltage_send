@@ -34,11 +34,11 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-#define DATA_VALUES_COUNT 10       // Количество значений в ПЛИС (должен соответствовать коду ПЛИС)
-#define VALUES_PER_LINE 10         // Количество значений в строке вывода
+#define DATA_VALUES_COUNT 10000       // Количество значений в ПЛИС (соответствует коду ПЛИС)
+#define VALUES_PER_LINE 10          // Количество значений в строке вывода
 
 typedef struct {
-    uint16_t data[DATA_VALUES_COUNT]; // Буфер для хранения данных от ПЛИС
+    uint16_t data[DATA_VALUES_COUNT]; // Буфер для хранения данных от ПЛИС (12-битные значения)
     bool data_ready;                  // Флаг готовности данных
     uint8_t data_count;               // Количество считанных данных
 } FPGA_Data;
@@ -101,30 +101,32 @@ void Set_DAC_Voltage(float voltage);
 /* USER CODE BEGIN 0 */
 /**
   * @brief Чтение данных из ПЛИС через FSMC интерфейс
-  * @note Читает 10 значений по 12 бит из ПЛИС (каждое значение в старших 12 битах 16-битного слова)
+  * @note Читает 100 значений по 12 бит из ПЛИС (каждое значение в младших 12 битах 16-битного слова)
+  * @note ПЛИС автоматически переключает индекс данных при каждом чтении
   */
 void ReadFPGAData(void) {
     fpga_data.data_count = 0;
     fpga_data.data_ready = false;
 
-    __disable_irq();
+    __disable_irq(); // Отключаем прерывания для атомарного чтения
 
     for (int i = 0; i < DATA_VALUES_COUNT; i++) {
-        // Просто читаем значение - ПЛИС само должно переключаться на следующее
+        // Читаем значение - ПЛИС автоматически переключает индекс при каждом чтении
         uint16_t value = fpga_reg[0];
-        fpga_data.data[i] = value & 0x0FFF;
+        fpga_data.data[i] = value & 0x0FFF; // Извлекаем 12-битное значение
         fpga_data.data_count++;
 
-        // Небольшая задержка между чтениями
+        // Небольшая задержка между чтениями для стабильности
         for(volatile int j = 0; j < 10; j++);
     }
 
-    __enable_irq();
+    __enable_irq(); // Включаем прерывания обратно
     fpga_data.data_ready = true;
 }
 
 /**
   * @brief Вывод данных через USB CDC
+  * @note Форматирует данные в виде таблицы 10x10 значений
   */
 void PrintDataToUSB(void) {
     if (!fpga_data.data_ready) return;
@@ -134,7 +136,7 @@ void PrintDataToUSB(void) {
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
     HAL_Delay(10);
 
-    // Формируем строку с данными
+    // Формируем строки с данными
     char data_line[64] = "";
     for (int i = 0; i < DATA_VALUES_COUNT; i++) {
         char val_str[8];
@@ -163,7 +165,7 @@ void SendUSBDebugMessage(const char *message) {
 
 /**
   * @brief Записывает значение напряжения во Flash-память
-  * @param voltage: Значение напряжения для сохранения
+  * @param voltage: Значение напряжения для сохранения (0.0 - 3.3V)
   * @retval Статус операции (HAL_OK в случае успеха)
   */
 HAL_StatusTypeDef Write_Voltage_To_Flash(float voltage) {
@@ -207,7 +209,7 @@ float Read_Voltage_From_Flash() {
 
 /**
   * @brief Устанавливает напряжение на DAC
-  * @param voltage: Значение напряжения для установки (от 0.0 до 3.3)
+  * @param voltage: Значение напряжения для установки (0.0 - 3.3V)
   */
 void Set_DAC_Voltage(float voltage) {
     if (voltage < 0) voltage = 0;
@@ -267,7 +269,7 @@ int main(void)
 
     // Сообщение о готовности системы
     SendUSBDebugMessage("System initialized. Ready to communicate with FPGA...");
-    SendUSBDebugMessage("FPGA generates data automatically every 3 seconds");
+    SendUSBDebugMessage("FPGA generates 100 values (1111-1210) every 3 seconds");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -285,7 +287,7 @@ int main(void)
         if ((current_time - last_measurement_time) >= MEASUREMENT_INTERVAL_MS) {
             SendUSBDebugMessage("Reading data from FPGA...");
 
-            // Читаем данные из ПЛИС
+            // Читаем данные из ПЛИС (100 значений)
             ReadFPGAData();
 
             // Выводим результаты
@@ -305,6 +307,7 @@ int main(void)
   }
   /* USER CODE END 3 */
 }
+
 
 /* Остальной код остается без изменений */
 /* Остальной код (SystemClock_Config, MX_DAC_Init, MX_TIM3_Init, MX_USART1_UART_Init,
