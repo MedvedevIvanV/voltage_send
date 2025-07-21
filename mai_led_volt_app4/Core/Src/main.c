@@ -46,7 +46,6 @@ typedef struct {
 /* USER CODE BEGIN PD */
 #define FPGA_BASE_ADDRESS 0x60000000  // Базовый адрес Bank1 (NE1)
 #define START_PULSE_DURATION_NS 200   // Длительность стартового импульса в наносекундах
-#define MEASUREMENT_INTERVAL_MS 10000 // Интервал между измерениями в мс (10 секунд)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -62,8 +61,11 @@ SRAM_HandleTypeDef hsram1;
 /* USER CODE BEGIN PV */
 FPGA_Data fpga_data;                 // Структура для хранения данных ПЛИС
 char usb_msg[128];                   // Буфер для USB сообщений
-uint32_t last_measurement_time = 0;  // Время последнего измерения
 volatile uint16_t *fpga_reg;         // Указатель на регистр ПЛИС
+
+// Добавляем объявления переменных из usbd_cdc_if.c
+extern volatile uint8_t usb_rx_buffer[64];
+extern volatile uint8_t new_data_received;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -78,6 +80,7 @@ void ReadFPGAData(void);
 void PrintDataToUSB(void);
 void SendUSBDebugMessage(const char *message);
 void GenerateStartPulse(void);
+void ProcessUSBCommand(uint8_t cmd);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -163,6 +166,30 @@ void GenerateStartPulse(void) {
 
     SendUSBDebugMessage("Start pulse generated");
 }
+
+/**
+  * @brief Обработка команд от USB
+  * @param cmd Полученная команда
+  */
+void ProcessUSBCommand(uint8_t cmd) {
+    switch(cmd) {
+        case '1': // Стартовая команда
+            GenerateStartPulse();
+            ReadFPGAData();
+
+            if (fpga_data.data_ready) {
+                SendUSBDebugMessage("Data received from FPGA:");
+                PrintDataToUSB();
+                fpga_data.data_ready = false;
+            }
+            break;
+
+        default:
+            // Неизвестная команда
+            SendUSBDebugMessage("Unknown command received");
+            break;
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -209,30 +236,16 @@ int main(void)
 
     // Сообщение о готовности системы
     SendUSBDebugMessage("System initialized. Ready to communicate with FPGA...");
-    SendUSBDebugMessage("Generating START pulse every 10 seconds on PD6");
+    SendUSBDebugMessage("Send '1' via USB to generate START pulse on PD6");
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
     while (1) {
-        uint32_t current_time = HAL_GetTick();
-
-        // Проверяем, прошло ли 10 секунд с последнего измерения
-        if ((current_time - last_measurement_time) >= MEASUREMENT_INTERVAL_MS) {
-            // Генерируем стартовый импульс для ПЛИС
-            GenerateStartPulse();
-
-            // Читаем данные из ПЛИС (10000 значений)
-            ReadFPGAData();
-
-            // Выводим результаты
-            if (fpga_data.data_ready) {
-                SendUSBDebugMessage("Data received from FPGA:");
-                PrintDataToUSB();
-                fpga_data.data_ready = false;
-            }
-
-            last_measurement_time = current_time;
+        // Проверяем наличие команды от USB
+        if (new_data_received) {
+            ProcessUSBCommand(usb_rx_buffer[0]);
+            new_data_received = 0; // Сбрасываем флаг
         }
 
         HAL_Delay(100); // Небольшая задержка для снижения нагрузки на CPU
@@ -242,7 +255,6 @@ int main(void)
   }
   /* USER CODE END 3 */
 }
-
 /**
   * @brief System Clock Configuration
   * @retval None

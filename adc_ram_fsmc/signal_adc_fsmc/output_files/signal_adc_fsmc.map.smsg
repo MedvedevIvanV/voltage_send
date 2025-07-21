@@ -1,0 +1,1 @@
+Info (10281): Verilog HDL Declaration information at signal_adc_fsmc.v(10): object "FPGA_WE" differs only in case from object "fpga_we" in the same scope File: C:/Proect FGPA/Verification/adc_ram_fsmc/signal_adc_fsmc/signal_adc_fsmc.v Line: 10
