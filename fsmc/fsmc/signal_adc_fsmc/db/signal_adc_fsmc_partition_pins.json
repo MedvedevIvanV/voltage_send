@@ -70,6 +70,14 @@
 				{
 					"name" : "FGPA_OE",
 					"strict" : false
+				},
+				{
+					"name" : "DCLK",
+					"strict" : false
+				},
+				{
+					"name" : "START_FGPA",
+					"strict" : false
 				}
 			]
 		}

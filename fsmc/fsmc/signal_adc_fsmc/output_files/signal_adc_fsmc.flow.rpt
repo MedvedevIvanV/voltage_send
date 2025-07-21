@@ -1,5 +1,5 @@
 Flow report for signal_adc_fsmc
-Fri Jul 18 14:58:15 2025
+Mon Jul 21 09:52:15 2025
 Quartus Prime Version 17.1.0 Build 590 10/25/2017 SJ Lite Edition
 
 
@@ -40,20 +40,20 @@ refer to the applicable agreement for further details.
 +----------------------------------------------------------------------------------+
 ; Flow Summary                                                                     ;
 +------------------------------------+---------------------------------------------+
-; Flow Status                        ; Successful - Fri Jul 18 14:58:10 2025       ;
+; Flow Status                        ; Successful - Mon Jul 21 09:52:10 2025       ;
 ; Quartus Prime Version              ; 17.1.0 Build 590 10/25/2017 SJ Lite Edition ;
 ; Revision Name                      ; signal_adc_fsmc                             ;
 ; Top-level Entity Name              ; signal_adc_fsmc                             ;
 ; Family                             ; Cyclone 10 LP                               ;
 ; Device                             ; 10CL006YE144A7G                             ;
 ; Timing Models                      ; Final                                       ;
-; Total logic elements               ; 39 / 6,272 ( < 1 % )                        ;
-;     Total combinational functions  ; 39 / 6,272 ( < 1 % )                        ;
-;     Dedicated logic registers      ; 29 / 6,272 ( < 1 % )                        ;
-; Total registers                    ; 29                                          ;
-; Total pins                         ; 27 / 89 ( 30 % )                            ;
+; Total logic elements               ; 41 / 6,272 ( < 1 % )                        ;
+;     Total combinational functions  ; 38 / 6,272 ( < 1 % )                        ;
+;     Dedicated logic registers      ; 21 / 6,272 ( < 1 % )                        ;
+; Total registers                    ; 21                                          ;
+; Total pins                         ; 29 / 89 ( 33 % )                            ;
 ; Total virtual pins                 ; 0                                           ;
-; Total memory bits                  ; 0 / 276,480 ( 0 % )                         ;
+; Total memory bits                  ; 120,000 / 276,480 ( 43 % )                  ;
 ; Embedded Multiplier 9-bit elements ; 0 / 30 ( 0 % )                              ;
 ; Total PLLs                         ; 1 / 2 ( 50 % )                              ;
 +------------------------------------+---------------------------------------------+
@@ -64,7 +64,7 @@ refer to the applicable agreement for further details.
 +-------------------+---------------------+
 ; Option            ; Setting             ;
 +-------------------+---------------------+
-; Start date & time ; 07/18/2025 14:57:15 ;
+; Start date & time ; 07/21/2025 09:51:13 ;
 ; Main task         ; Compilation         ;
 ; Revision Name     ; signal_adc_fsmc     ;
 +-------------------+---------------------+
@@ -75,7 +75,7 @@ refer to the applicable agreement for further details.
 +-------------------------------------+----------------------------------------+---------------+-------------+------------+
 ; Assignment Name                     ; Value                                  ; Default Value ; Entity Name ; Section Id ;
 +-------------------------------------+----------------------------------------+---------------+-------------+------------+
-; COMPILER_SIGNATURE_ID               ; 1098143721688.175283983506184          ; --            ; --          ; --         ;
+; COMPILER_SIGNATURE_ID               ; 1098143721688.175308067302124          ; --            ; --          ; --         ;
 ; MAX_CORE_JUNCTION_TEMP              ; 125                                    ; --            ; --          ; --         ;
 ; MIN_CORE_JUNCTION_TEMP              ; -40                                    ; --            ; --          ; --         ;
 ; MISC_FILE                           ; pll_20_to_80_bb.v                      ; --            ; --          ; --         ;
@@ -96,11 +96,11 @@ refer to the applicable agreement for further details.
 +---------------------------+--------------+-------------------------+---------------------+------------------------------------+
 ; Module Name               ; Elapsed Time ; Average Processors Used ; Peak Virtual Memory ; Total CPU Time (on all processors) ;
 +---------------------------+--------------+-------------------------+---------------------+------------------------------------+
-; Analysis & Synthesis      ; 00:00:44     ; 1.0                     ; 4760 MB             ; 00:01:10                           ;
-; Fitter                    ; 00:00:07     ; 1.0                     ; 5184 MB             ; 00:00:08                           ;
-; Assembler                 ; 00:00:01     ; 1.0                     ; 4667 MB             ; 00:00:02                           ;
-; TimeQuest Timing Analyzer ; 00:00:04     ; 1.0                     ; 4721 MB             ; 00:00:03                           ;
-; Total                     ; 00:00:56     ; --                      ; --                  ; 00:01:23                           ;
+; Analysis & Synthesis      ; 00:00:45     ; 1.0                     ; 4744 MB             ; 00:01:10                           ;
+; Fitter                    ; 00:00:08     ; 1.0                     ; 5183 MB             ; 00:00:09                           ;
+; Assembler                 ; 00:00:01     ; 1.0                     ; 4667 MB             ; 00:00:01                           ;
+; TimeQuest Timing Analyzer ; 00:00:04     ; 1.0                     ; 4719 MB             ; 00:00:03                           ;
+; Total                     ; 00:00:58     ; --                      ; --                  ; 00:01:23                           ;
 +---------------------------+--------------+-------------------------+---------------------+------------------------------------+
 
 

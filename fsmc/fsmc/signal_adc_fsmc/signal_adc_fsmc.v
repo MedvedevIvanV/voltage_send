@@ -1,5 +1,7 @@
 module signal_adc_fsmc (
     input clk_20mhz,
+    input DCLK,          // Входной тактовый сигнал для FSMC
+    input START_FGPA,    // Сигнал запуска генерации данных
     output CLK_P,
     output EMA_PULSE_N,
     output EMA_PULSE_P,
@@ -24,9 +26,9 @@ pll_20_to_80 pll_inst (
     .locked(pll_locked)
 );
 
-assign CLK_P = clk_80mhz;
+assign CLK_P = clk_80mhz;  // 80 МГц только для дифференциальной пары
 
-// ================== FSMC Interface ==================
+// ================== FSMC Interface (работает на DCLK) ==================
 reg [15:0] fsmc_out;
 reg fsmc_dir; // Направление: 1 - ПЛИС -> STM, 0 - STM -> ПЛИС
 
@@ -38,11 +40,16 @@ reg [11:0] data_values [0:9999];
 reg [13:0] data_index = 0; // Увеличиваем размер индекса для 10000 значений
 reg data_ready = 0; // Флаг готовности данных
 
-// Регистр для детектирования фронта OE
+// Регистры для синхронизации FSMC
 reg oe_prev = 1;
+reg we_prev = 1;
+
+// Регистры для синхронизации START_FGPA
+reg [2:0] start_sync = 0;
+reg start_prev = 0;
 
 // Инициализация массива данных
-integer i; // Объявляем переменную цикла вне блока initial
+integer i;
 initial begin
     // Первая часть: от 0 до 4095 (4096 значений)
     for (i = 0; i < 4096; i = i + 1) begin
@@ -60,46 +67,41 @@ initial begin
     end
 end
 
-always @(posedge clk_80mhz) begin
-    if (!pll_locked) begin
-        // Сброс всех регистров при отсутствии PLL
+// Синхронизация сигнала START_FGPA на тактовой частоте DCLK
+always @(posedge DCLK) begin
+    start_sync <= {start_sync[1:0], START_FGPA};
+    start_prev <= start_sync[1];
+end
+
+// Основная логика работы с FSMC (тактуется от DCLK)
+always @(posedge DCLK) begin
+    // Синхронизация входных сигналов FSMC
+    oe_prev <= FGPA_OE;
+    we_prev <= FGPA_WE;
+    
+    // Обнаружение фронта START_FGPA (синхронизированного)
+    if (!start_prev && start_sync[1]) begin
+        // Запуск передачи данных
+        data_ready <= 1;
         data_index <= 0;
-        fsmc_dir <= 0;
-        fsmc_out <= 0;
-        data_ready <= 0;
-        oe_prev <= 1;
-    end else begin
-        // Детектируем фронт сигнала FGPA_OE (переход 1->0)
-        oe_prev <= FGPA_OE;
+    end
+    
+    // Логика передачи данных
+    if (data_ready) begin
+        fsmc_dir <= 1;
+        fsmc_out <= {4'b0000, data_values[data_index]};
         
-        // Основная логика передачи данных
-        if (!FGPA_OE) begin
-            // Устанавливаем данные на шину
-            fsmc_out <= {4'b0000, data_values[data_index]};
-            fsmc_dir <= 1;
-            
-            // Переключаем индекс по фронту OE
-            if (oe_prev && !FGPA_OE) begin // Обнаружен фронт
-                if (data_ready) begin
-                    if (data_index < 9999) begin
-                        data_index <= data_index + 1;
-                    end else begin
-                        data_index <= 0;
-                        data_ready <= 0; // Все данные переданы
-                    end
-                end
+        // Переключаем индекс по фронту OE
+        if (oe_prev && !FGPA_OE) begin // Обнаружен фронт
+            if (data_index < 9999) begin
+                data_index <= data_index + 1;
+            end else begin
+                data_index <= 0;
+                data_ready <= 0; // Все данные переданы
             end
-        end else begin
-            fsmc_dir <= 0;
         end
-        
-        // Автоматическая подготовка новых данных каждые 3 секунды
-        if (data_ready == 0) begin
-            // Здесь можно добавить логику генерации новых данных
-            // Пока просто устанавливаем флаг готовности
-            data_ready <= 1;
-            data_index <= 0;
-        end
+    end else begin
+        fsmc_dir <= 0;
     end
 end
 

@@ -8,13 +8,13 @@
   *
   * This code configures FSMC interface to communicate with FPGA (10CL006YE144I7G)
   * without external memory. It reads ADC data from FPGA and sends it via USB CDC.
-  * Also includes DAC voltage control functionality with Flash storage.
   *
   * Connections:
   * - FSMC_D[15:0] to FPGA data bus
   * - FSMC_NOE to FPGA_OE (read enable)
   * - FSMC_NWE to FPGA_WE (write enable, not used in this case)
   * - FSMC_NE1 to FPGA chip select
+  * - PD6 to FPGA START_FGPA (start signal)
   */
 /* USER CODE END Header */
 
@@ -28,14 +28,12 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include "usbd_cdc_if.h"
-#include "stm32f4xx_hal_flash.h"
-#include "stm32f4xx.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 #define DATA_VALUES_COUNT 10000       // Количество значений в ПЛИС (соответствует коду ПЛИС)
-#define VALUES_PER_LINE 10          // Количество значений в строке вывода
+#define VALUES_PER_LINE 10            // Количество значений в строке вывода
 
 typedef struct {
     uint16_t data[DATA_VALUES_COUNT]; // Буфер для хранения данных от ПЛИС (12-битные значения)
@@ -47,12 +45,8 @@ typedef struct {
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define FPGA_BASE_ADDRESS 0x60000000  // Базовый адрес Bank1 (NE1)
-#define MEASUREMENT_INTERVAL_MS 3000  // Интервал между измерениями в мс (соответствует ПЛИС)
-
-// Адрес во Flash-памяти для хранения напряжения
-#define VOLTAGE_STORAGE_ADDR 0x080E0000
-// Сектор Flash-памяти для хранения напряжения
-#define FLASH_SECTOR FLASH_SECTOR_11
+#define START_PULSE_DURATION_NS 200   // Длительность стартового импульса в наносекундах
+#define MEASUREMENT_INTERVAL_MS 10000 // Интервал между измерениями в мс (10 секунд)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -61,11 +55,8 @@ typedef struct {
 
 /* Private variables ---------------------------------------------------------*/
 DAC_HandleTypeDef hdac;
-
 TIM_HandleTypeDef htim3;
-
 UART_HandleTypeDef huart1;
-
 SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
@@ -73,35 +64,27 @@ FPGA_Data fpga_data;                 // Структура для хранени
 char usb_msg[128];                   // Буфер для USB сообщений
 uint32_t last_measurement_time = 0;  // Время последнего измерения
 volatile uint16_t *fpga_reg;         // Указатель на регистр ПЛИС
-
-// DAC control variables
-float dac_voltage = 0.0f;            // Текущее напряжение на DAC
-uint32_t dac_last_update = 0;        // Время последнего обновления напряжения
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
-static void MX_DAC_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_DAC_Init(void);
 static void MX_FSMC_Init(void);
 /* USER CODE BEGIN PFP */
 void ReadFPGAData(void);
 void PrintDataToUSB(void);
 void SendUSBDebugMessage(const char *message);
-
-// DAC control functions
-HAL_StatusTypeDef Write_Voltage_To_Flash(float voltage);
-float Read_Voltage_From_Flash(void);
-void Set_DAC_Voltage(float voltage);
+void GenerateStartPulse(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 /**
   * @brief Чтение данных из ПЛИС через FSMC интерфейс
-  * @note Читает 100 значений по 12 бит из ПЛИС (каждое значение в младших 12 битах 16-битного слова)
+  * @note Читает 10000 значений по 12 бит из ПЛИС (каждое значение в младших 12 битах 16-битного слова)
   * @note ПЛИС автоматически переключает индекс данных при каждом чтении
   */
 void ReadFPGAData(void) {
@@ -164,61 +147,21 @@ void SendUSBDebugMessage(const char *message) {
 }
 
 /**
-  * @brief Записывает значение напряжения во Flash-память
-  * @param voltage: Значение напряжения для сохранения (0.0 - 3.3V)
-  * @retval Статус операции (HAL_OK в случае успеха)
+  * @brief Генерация стартового импульса для ПЛИС
+  * @note Импульс длительностью 200 нс на пине PD6
   */
-HAL_StatusTypeDef Write_Voltage_To_Flash(float voltage) {
-    HAL_StatusTypeDef status;
-    uint32_t voltageData = *(uint32_t*)&voltage;
+void GenerateStartPulse(void) {
+    // Устанавливаем высокий уровень на PD6
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_SET);
 
-    HAL_FLASH_Unlock();
-    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP | FLASH_FLAG_OPERR | FLASH_FLAG_WRPERR |
-                          FLASH_FLAG_PGAERR | FLASH_FLAG_PGPERR | FLASH_FLAG_PGSERR);
+    // Задержка для формирования импульса 200 нс
+    // При тактовой частоте 168 МГц (5.95 нс на цикл) нужно ~34 цикла
+    for(volatile int i = 0; i < 34; i++);
 
-    FLASH_EraseInitTypeDef EraseInitStruct;
-    EraseInitStruct.TypeErase = FLASH_TYPEERASE_SECTORS;
-    EraseInitStruct.Sector = FLASH_SECTOR;
-    EraseInitStruct.NbSectors = 1;
-    EraseInitStruct.VoltageRange = FLASH_VOLTAGE_RANGE_3;
+    // Устанавливаем низкий уровень на PD6
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_RESET);
 
-    uint32_t SectorError;
-    status = HAL_FLASHEx_Erase(&EraseInitStruct, &SectorError);
-    if (status != HAL_OK) {
-        HAL_FLASH_Lock();
-        return status;
-    }
-
-    status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, VOLTAGE_STORAGE_ADDR, voltageData);
-    FLASH_WaitForLastOperation(100);
-    HAL_FLASH_Lock();
-    return status;
-}
-
-/**
-  * @brief Читает значение напряжения из Flash-памяти
-  * @retval Прочитанное значение напряжения (3.3V по умолчанию, если данные невалидны)
-  */
-float Read_Voltage_From_Flash() {
-    uint32_t voltageData = *(__IO uint32_t*)(VOLTAGE_STORAGE_ADDR);
-    if (voltageData == 0xFFFFFFFF) {
-        return 3.3f;
-    }
-    return *(float*)&voltageData;
-}
-
-/**
-  * @brief Устанавливает напряжение на DAC
-  * @param voltage: Значение напряжения для установки (0.0 - 3.3V)
-  */
-void Set_DAC_Voltage(float voltage) {
-    if (voltage < 0) voltage = 0;
-    if (voltage > 3.3f) voltage = 3.3f;
-
-    uint32_t dac_value = (voltage / 3.3f) * 4095;
-    HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
-    HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
-    dac_voltage = voltage;
+    SendUSBDebugMessage("Start pulse generated");
 }
 /* USER CODE END 0 */
 
@@ -252,8 +195,8 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_USB_DEVICE_Init();
-  MX_DAC_Init();
   MX_TIM3_Init();
+  MX_DAC_Init();
   MX_FSMC_Init();
   /* USER CODE BEGIN 2 */
     HAL_TIM_Base_Start(&htim3);
@@ -264,12 +207,9 @@ int main(void)
     // Инициализация структуры данных
     memset(&fpga_data, 0, sizeof(fpga_data));
 
-    // Инициализация DAC с начальным напряжением 0V
-    Set_DAC_Voltage(0.0f);
-
     // Сообщение о готовности системы
     SendUSBDebugMessage("System initialized. Ready to communicate with FPGA...");
-    SendUSBDebugMessage("FPGA generates 100 values (1111-1210) every 3 seconds");
+    SendUSBDebugMessage("Generating START pulse every 10 seconds on PD6");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -277,17 +217,12 @@ int main(void)
     while (1) {
         uint32_t current_time = HAL_GetTick();
 
-        // Циклическое изменение напряжения DAC каждые 3 секунды
-        if (current_time - dac_last_update > 3000) {
-            dac_last_update = current_time;
-            Set_DAC_Voltage((dac_voltage < 1.65f) ? 3.3f : 0.0f);
-        }
-
-        // Проверяем, прошло ли 3 секунды с последнего измерения
+        // Проверяем, прошло ли 10 секунд с последнего измерения
         if ((current_time - last_measurement_time) >= MEASUREMENT_INTERVAL_MS) {
-            SendUSBDebugMessage("Reading data from FPGA...");
+            // Генерируем стартовый импульс для ПЛИС
+            GenerateStartPulse();
 
-            // Читаем данные из ПЛИС (100 значений)
+            // Читаем данные из ПЛИС (10000 значений)
             ReadFPGAData();
 
             // Выводим результаты
@@ -307,11 +242,6 @@ int main(void)
   }
   /* USER CODE END 3 */
 }
-
-
-/* Остальной код остается без изменений */
-/* Остальной код (SystemClock_Config, MX_DAC_Init, MX_TIM3_Init, MX_USART1_UART_Init,
-   MX_GPIO_Init, MX_FSMC_Init, Error_Handler) остается без изменений */
 
 /**
   * @brief System Clock Configuration
@@ -547,12 +477,12 @@ static void MX_FSMC_Init(void)
   hsram1.Init.WriteBurst = FSMC_WRITE_BURST_DISABLE;
   hsram1.Init.PageSize = FSMC_PAGE_SIZE_NONE;
   /* Timing */
-  Timing.AddressSetupTime = 15;
-  Timing.AddressHoldTime = 15;
-  Timing.DataSetupTime = 255;
-  Timing.BusTurnAroundDuration = 15;
-  Timing.CLKDivision = 16;
-  Timing.DataLatency = 17;
+  Timing.AddressSetupTime = 2;
+  Timing.AddressHoldTime = 1;
+  Timing.DataSetupTime =  5;
+  Timing.BusTurnAroundDuration = 1;
+  Timing.CLKDivision = 2;
+  Timing.DataLatency = 2;
   Timing.AccessMode = FSMC_ACCESS_MODE_A;
   /* ExtTiming */
 
