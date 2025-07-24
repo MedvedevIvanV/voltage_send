@@ -1,0 +1,21 @@
+{
+	"partitions" : [
+		{
+			"name" : "Top",
+			"pins" : [
+				{
+					"name" : "EMA_PULSE_P",
+					"strict" : false
+				},
+				{
+					"name" : "EMA_PULSE_N",
+					"strict" : false
+				},
+				{
+					"name" : "CLK_0",
+					"strict" : false
+				}
+			]
+		}
+	]
+}

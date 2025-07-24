@@ -17,7 +17,6 @@
   * - PD6 to FPGA START_FGPA (start signal)
   */
 /* USER CODE END Header */
-
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "usb_device.h"
@@ -28,6 +27,8 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include "usbd_cdc_if.h"
+#include "pin_69.h" // Файл с конфигурацией ПЛИС (массив uint8_t fpga_config[])
+#include "stm32f4xx_hal.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -54,8 +55,11 @@ typedef struct {
 
 /* Private variables ---------------------------------------------------------*/
 DAC_HandleTypeDef hdac;
+
 TIM_HandleTypeDef htim3;
+
 UART_HandleTypeDef huart1;
+
 SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
@@ -72,8 +76,8 @@ extern volatile uint8_t new_data_received;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
-static void MX_TIM3_Init(void);
 static void MX_DAC_Init(void);
+static void MX_TIM3_Init(void);
 static void MX_FSMC_Init(void);
 /* USER CODE BEGIN PFP */
 void ReadFPGAData(void);
@@ -81,6 +85,7 @@ void PrintDataToUSB(void);
 void SendUSBDebugMessage(const char *message);
 void GenerateStartPulse(void);
 void ProcessUSBCommand(uint8_t cmd);
+void FPGA_SendConfig(uint8_t *config_data, uint32_t size);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -190,6 +195,64 @@ void ProcessUSBCommand(uint8_t cmd) {
             break;
     }
 }
+
+
+
+void FPGA_SendConfig(uint8_t *config_data, uint32_t size) {
+    // 1. Инициализация пинов
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    // Настройка DATA (PC11) как выход
+    GPIO_InitStruct.Pin = GPIO_PIN_11;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+    // 2. Последовательность сброса ПЛИС
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);   // TH_CS = 1
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);   // cso = 1
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET); // nCONFIG = 0
+    HAL_Delay(100); // Длительный сброс (100 мс)
+
+    // 3. Запуск конфигурации
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_RESET);  // CE = 0
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_SET);   // nCONFIG = 1
+    HAL_Delay(10); // Ожидание готовности ПЛИС
+
+    // 4. Отправка данных конфигурации
+    for (uint32_t i = 0; i < size; i++) {
+        uint8_t byte = config_data[i];
+        for (int bit = 0; bit < 8; bit++) {
+            // Установка бита данных (LSB first)
+            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, (byte & 0x01) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+            byte >>= 1;
+
+            // Тактовый импульс (минимум 50 нс)
+            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
+            __NOP(); __NOP(); __NOP(); __NOP(); // Короткая задержка (~20 нс при 168 MHz)
+            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
+            __NOP(); __NOP(); // Пауза между битами
+        }
+    }
+
+    // 5. Завершение конфигурации
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_SET);    // CE = 1
+    HAL_Delay(1);
+
+    // 6. Дополнительные тактовые импульсы
+    for (int i = 0; i < 8; i++) {
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
+        __NOP(); __NOP();
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
+        __NOP(); __NOP();
+    }
+
+    // 7. Возврат в исходное состояние
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);  // TH_CS = 0
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET);  // cso = 0
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_RESET); // DATA = 0
+}
 /* USER CODE END 0 */
 
 /**
@@ -198,6 +261,7 @@ void ProcessUSBCommand(uint8_t cmd) {
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -220,41 +284,102 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_USART1_UART_Init();
-  MX_USB_DEVICE_Init();
-  MX_TIM3_Init();
-  MX_DAC_Init();
-  MX_FSMC_Init();
+  //MX_USART1_UART_Init();
+  //MX_USB_DEVICE_Init();
+  //MX_DAC_Init();
+  //MX_TIM3_Init();
+  //MX_FSMC_Init();
   /* USER CODE BEGIN 2 */
-    HAL_TIM_Base_Start(&htim3);
 
-    // Инициализация указателя на регистр ПЛИС
-    fpga_reg = (volatile uint16_t *)FPGA_BASE_ADDRESS;
+    // Получаем данные конфигурации из pin_69.h
+    uint8_t *config_data = fpga_config; // Используем массив из pin_69.h
+    uint32_t config_size = sizeof(fpga_config); // Размер автоматически вычисляется
 
-    // Инициализация структуры данных
-    memset(&fpga_data, 0, sizeof(fpga_data));
-
-    // Сообщение о готовности системы
-    SendUSBDebugMessage("System initialized. Ready to communicate with FPGA...");
-    SendUSBDebugMessage("Send '1' via USB to generate START pulse on PD6");
+    // Вызов функции загрузки конфигурации
+    FPGA_SendConfig(config_data, config_size);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
     while (1) {
-        // Проверяем наличие команды от USB
-        if (new_data_received) {
-            ProcessUSBCommand(usb_rx_buffer[0]);
-            new_data_received = 0; // Сбрасываем флаг
-        }
-
-        HAL_Delay(100); // Небольшая задержка для снижения нагрузки на CPU
+//    	char debug_msg[100];
+//
+//    	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);
+//    	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET);
+//    	snprintf(debug_msg, sizeof(debug_msg), "STATE: PC8=%d, PA15=%d, PB8=%d, PC9=%d, PC12=%d, PC10=%d\r\n",
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8),
+//    	         HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15),
+//    	         HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_12),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_10));
+//    	CDC_Transmit_FS((uint8_t*)debug_msg, strlen(debug_msg));
+//    	HAL_Delay(10);
+//
+//    	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_SET);
+//    	snprintf(debug_msg, sizeof(debug_msg), "STATE: PC8=%d, PA15=%d, PB8=%d, PC9=%d, PC12=%d, PC10=%d\r\n",
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8),
+//    	         HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15),
+//    	         HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_12),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_10));
+//    	CDC_Transmit_FS((uint8_t*)debug_msg, strlen(debug_msg));
+//    	HAL_Delay(10);
+//
+//    	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET);
+//    	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_RESET);
+//    	snprintf(debug_msg, sizeof(debug_msg), "STATE: PC8=%d, PA15=%d, PB8=%d, PC9=%d, PC12=%d, PC10=%d\r\n",
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8),
+//    	         HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15),
+//    	         HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_12),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_10));
+//    	CDC_Transmit_FS((uint8_t*)debug_msg, strlen(debug_msg));
+//    	HAL_Delay(100);
+//
+//    	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_12, GPIO_PIN_SET);
+//    	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
+//    	snprintf(debug_msg, sizeof(debug_msg), "STATE: PC8=%d, PA15=%d, PB8=%d, PC9=%d, PC12=%d, PC10=%d\r\n",
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8),
+//    	         HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15),
+//    	         HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_12),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_10));
+//    	CDC_Transmit_FS((uint8_t*)debug_msg, strlen(debug_msg));
+//    	HAL_Delay(1);
+//
+//    	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
+//    	snprintf(debug_msg, sizeof(debug_msg), "STATE: PC8=%d, PA15=%d, PB8=%d, PC9=%d, PC12=%d, PC10=%d\r\n",
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8),
+//    	         HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15),
+//    	         HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_12),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_10));
+//    	CDC_Transmit_FS((uint8_t*)debug_msg, strlen(debug_msg));
+//    	HAL_Delay(1);
+//
+//    	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);
+//    	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_SET);
+//    	snprintf(debug_msg, sizeof(debug_msg), "STATE: PC8=%d, PA15=%d, PB8=%d, PC9=%d, PC12=%d, PC10=%d\r\n",
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8),
+//    	         HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15),
+//    	         HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_12),
+//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_10));
+//    	CDC_Transmit_FS((uint8_t*)debug_msg, strlen(debug_msg));
+//    	HAL_Delay(1000);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
+
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -307,6 +432,7 @@ void SystemClock_Config(void)
   */
 static void MX_DAC_Init(void)
 {
+
   /* USER CODE BEGIN DAC_Init 0 */
 
   /* USER CODE END DAC_Init 0 */
@@ -336,6 +462,7 @@ static void MX_DAC_Init(void)
   /* USER CODE BEGIN DAC_Init 2 */
 
   /* USER CODE END DAC_Init 2 */
+
 }
 
 /**
@@ -345,6 +472,7 @@ static void MX_DAC_Init(void)
   */
 static void MX_TIM3_Init(void)
 {
+
   /* USER CODE BEGIN TIM3_Init 0 */
 
   /* USER CODE END TIM3_Init 0 */
@@ -379,6 +507,7 @@ static void MX_TIM3_Init(void)
   /* USER CODE BEGIN TIM3_Init 2 */
 
   /* USER CODE END TIM3_Init 2 */
+
 }
 
 /**
@@ -388,6 +517,7 @@ static void MX_TIM3_Init(void)
   */
 static void MX_USART1_UART_Init(void)
 {
+
   /* USER CODE BEGIN USART1_Init 0 */
 
   /* USER CODE END USART1_Init 0 */
@@ -410,6 +540,7 @@ static void MX_USART1_UART_Init(void)
   /* USER CODE BEGIN USART1_Init 2 */
 
   /* USER CODE END USART1_Init 2 */
+
 }
 
 /**
@@ -429,20 +560,34 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5|GPIO_PIN_15, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10|GPIO_PIN_11, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : PA5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8|GPIO_PIN_9, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : PA5 PA15 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_15;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PC8 PC9 PC10 PC11 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10|GPIO_PIN_11;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PD6 */
   GPIO_InitStruct.Pin = GPIO_PIN_6;
@@ -450,6 +595,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PB8 PB9 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -459,6 +611,7 @@ static void MX_GPIO_Init(void)
 /* FSMC initialization function */
 static void MX_FSMC_Init(void)
 {
+
   /* USER CODE BEGIN FSMC_Init 0 */
 
   /* USER CODE END FSMC_Init 0 */
@@ -475,7 +628,7 @@ static void MX_FSMC_Init(void)
   hsram1.Extended = FSMC_NORSRAM_EXTENDED_DEVICE;
   /* hsram1.Init */
   hsram1.Init.NSBank = FSMC_NORSRAM_BANK1;
-  hsram1.Init.DataAddressMux = FSMC_DATA_ADDRESS_MUX_DISABLE;
+  hsram1.Init.DataAddressMux = FSMC_DATA_ADDRESS_MUX_ENABLE;
   hsram1.Init.MemoryType = FSMC_MEMORY_TYPE_PSRAM;
   hsram1.Init.MemoryDataWidth = FSMC_NORSRAM_MEM_BUS_WIDTH_16;
   hsram1.Init.BurstAccessMode = FSMC_BURST_ACCESS_MODE_DISABLE;
@@ -489,12 +642,12 @@ static void MX_FSMC_Init(void)
   hsram1.Init.WriteBurst = FSMC_WRITE_BURST_DISABLE;
   hsram1.Init.PageSize = FSMC_PAGE_SIZE_NONE;
   /* Timing */
-  Timing.AddressSetupTime = 2;
-  Timing.AddressHoldTime = 1;
-  Timing.DataSetupTime =  5;
-  Timing.BusTurnAroundDuration = 1;
-  Timing.CLKDivision = 2;
-  Timing.DataLatency = 2;
+  Timing.AddressSetupTime = 15;
+  Timing.AddressHoldTime = 15;
+  Timing.DataSetupTime = 255;
+  Timing.BusTurnAroundDuration = 15;
+  Timing.CLKDivision = 16;
+  Timing.DataLatency = 17;
   Timing.AccessMode = FSMC_ACCESS_MODE_A;
   /* ExtTiming */
 

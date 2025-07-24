@@ -1,0 +1,29 @@
+|pin_69
+CLK_0 => led_counter[0].CLK
+CLK_0 => led_counter[1].CLK
+CLK_0 => led_counter[2].CLK
+CLK_0 => led_counter[3].CLK
+CLK_0 => led_counter[4].CLK
+CLK_0 => led_counter[5].CLK
+CLK_0 => led_counter[6].CLK
+CLK_0 => led_counter[7].CLK
+CLK_0 => led_counter[8].CLK
+CLK_0 => led_counter[9].CLK
+CLK_0 => led_counter[10].CLK
+CLK_0 => led_counter[11].CLK
+CLK_0 => led_counter[12].CLK
+CLK_0 => led_counter[13].CLK
+CLK_0 => led_counter[14].CLK
+CLK_0 => led_counter[15].CLK
+CLK_0 => led_counter[16].CLK
+CLK_0 => led_counter[17].CLK
+CLK_0 => led_counter[18].CLK
+CLK_0 => led_counter[19].CLK
+CLK_0 => led_counter[20].CLK
+CLK_0 => led_counter[21].CLK
+CLK_0 => led_counter[22].CLK
+CLK_0 => led_counter[23].CLK
+EMA_PULSE_P << led_counter[23].DB_MAX_OUTPUT_PORT_TYPE
+EMA_PULSE_N << led_counter[22].DB_MAX_OUTPUT_PORT_TYPE
+
+
