@@ -17,6 +17,7 @@
   * - PD6 to FPGA START_FGPA (start signal)
   */
 /* USER CODE END Header */
+
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "usb_device.h"
@@ -70,6 +71,10 @@ volatile uint16_t *fpga_reg;         // Указатель на регистр �
 // Добавляем объявления переменных из usbd_cdc_if.c
 extern volatile uint8_t usb_rx_buffer[64];
 extern volatile uint8_t new_data_received;
+
+// Добавляем переменные для DAC управления
+float dac_voltage = 0.0f;
+uint32_t dac_last_update = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -86,10 +91,80 @@ void SendUSBDebugMessage(const char *message);
 void GenerateStartPulse(void);
 void ProcessUSBCommand(uint8_t cmd);
 void FPGA_SendConfig(uint8_t *config_data, uint32_t size);
+void Set_DAC_Voltage(float voltage);
+uint16_t Read_Thermocouple_Temperature(void); // Функция для чтения температуры с термопары
+void Send_Temperature_To_USB(void);           // Функция для отправки температуры по USB
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/**
+  * @brief Чтение температуры с термопары
+  * @return Сырое значение температуры (12 бит)
+  */
+uint16_t Read_Thermocouple_Temperature(void) {
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    uint16_t raw_data = 0;
+
+    // Настройка PC11 (DATA) как входа
+    GPIO_InitStruct.Pin = GPIO_PIN_11;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+    // Активация чипа (активный низкий уровень на PC8 - термопара CS)
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
+
+    // Задержка для стабилизации (минимум 100ns по даташиту)
+    for(volatile int i = 0; i < 10; i++);
+
+    // Чтение 16 бит данных
+    for(uint8_t i = 0; i < 16; i++) {
+        // Генерация тактового импульса (PC10 - DCLK)
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
+        for(volatile int j = 0; j < 5; j++); // Короткая задержка
+
+        // Чтение бита данных (MSB first)
+        if(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_11)) {
+            raw_data |= (1 << (15 - i));
+        }
+
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
+        for(volatile int j = 0; j < 5; j++); // Короткая задержка
+    }
+
+    // Деактивация чипа
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);
+
+    // Проверка на разомкнутую цепь (бит D2)
+    if(raw_data & 0x04) {
+        return 0xFFFF; // Код ошибки - разомкнутая цепь
+    }
+
+    // Извлечение 12-битного значения температуры (биты D14-D3)
+    raw_data >>= 3; // Убираем 3 младших бита (D2-D0)
+    return raw_data & 0x0FFF; // Оставляем только 12 бит температуры
+}
+
+/**
+  * @brief Отправка температуры по USB
+  */
+void Send_Temperature_To_USB(void) {
+    uint16_t raw_temp = Read_Thermocouple_Temperature();
+
+    if(raw_temp == 0xFFFF) {
+        CDC_Transmit_FS((uint8_t*)"Error: Thermocouple open circuit!\r\n", 34);
+        return;
+    }
+
+    // Конверсия в градусы (каждый LSB = 0.25°C)
+    float temperature = (float)raw_temp * 0.25f;
+
+    char temp_msg[32];
+    snprintf(temp_msg, sizeof(temp_msg), "Temperature: %.2f C\r\n", temperature);
+    CDC_Transmit_FS((uint8_t*)temp_msg, strlen(temp_msg));
+}
+
 /**
   * @brief Чтение данных из ПЛИС через FSMC интерфейс
   * @note Читает 10000 значений по 12 бит из ПЛИС (каждое значение в младших 12 битах 16-битного слова)
@@ -189,6 +264,10 @@ void ProcessUSBCommand(uint8_t cmd) {
             }
             break;
 
+        case 'T': // Команда для чтения температуры
+            Send_Temperature_To_USB();
+            break;
+
         default:
             // Неизвестная команда
             SendUSBDebugMessage("Unknown command received");
@@ -196,13 +275,16 @@ void ProcessUSBCommand(uint8_t cmd) {
     }
 }
 
-
-
+/**
+  * @brief Отправка конфигурации в ПЛИС
+  * @param config_data Указатель на данные конфигурации
+  * @param size Размер данных конфигурации
+  */
 void FPGA_SendConfig(uint8_t *config_data, uint32_t size) {
-    // 1. Инициализация пинов
     GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-    // Настройка DATA (PC11) как выход
+    // 1. Настройка пинов для конфигурации
+    // PC11 - DATA (выход)
     GPIO_InitStruct.Pin = GPIO_PIN_11;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -210,8 +292,11 @@ void FPGA_SendConfig(uint8_t *config_data, uint32_t size) {
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
     // 2. Последовательность сброса ПЛИС
+    // PC8 - термопара CS (активный низкий), устанавливаем в 1
+    // PB8 - CSO (активный низкий), устанавливаем в 1
+    // PA15 - nCONFIG (активный низкий), устанавливаем в 0 для сброса
     HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);   // TH_CS = 1
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);   // cso = 1
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);   // CSO = 1
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET); // nCONFIG = 0
     HAL_Delay(100); // Длительный сброс (100 мс)
 
@@ -224,11 +309,11 @@ void FPGA_SendConfig(uint8_t *config_data, uint32_t size) {
     for (uint32_t i = 0; i < size; i++) {
         uint8_t byte = config_data[i];
         for (int bit = 0; bit < 8; bit++) {
-            // Установка бита данных (LSB first)
+            // Установка бита данных (LSB first) на PC11
             HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, (byte & 0x01) ? GPIO_PIN_SET : GPIO_PIN_RESET);
             byte >>= 1;
 
-            // Тактовый импульс (минимум 50 нс)
+            // Тактовый импульс на PC10 (минимум 50 нс)
             HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
             __NOP(); __NOP(); __NOP(); __NOP(); // Короткая задержка (~20 нс при 168 MHz)
             HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
@@ -250,8 +335,27 @@ void FPGA_SendConfig(uint8_t *config_data, uint32_t size) {
 
     // 7. Возврат в исходное состояние
     HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);  // TH_CS = 0
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET);  // cso = 0
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET);  // CSO = 0
     HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_RESET); // DATA = 0
+}
+
+/**
+  * @brief Установка напряжения на DAC
+  * @param voltage Напряжение от 0.0 до 1.0 В
+  */
+void Set_DAC_Voltage(float voltage) {
+    if (voltage < 0) voltage = 0;
+    if (voltage > 1) voltage = 1;
+
+    uint32_t dac_value = (voltage / 3.3f) * 4095;
+    HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
+    HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
+    dac_voltage = voltage;
+
+    // Отправляем текущее напряжение по USB
+    char voltage_msg[32];
+    snprintf(voltage_msg, sizeof(voltage_msg), "DAC Voltage: %.3f V\r\n", dac_voltage);
+    CDC_Transmit_FS((uint8_t*)voltage_msg, strlen(voltage_msg));
 }
 /* USER CODE END 0 */
 
@@ -261,7 +365,6 @@ void FPGA_SendConfig(uint8_t *config_data, uint32_t size) {
   */
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -284,11 +387,11 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  //MX_USART1_UART_Init();
-  //MX_USB_DEVICE_Init();
-  //MX_DAC_Init();
-  //MX_TIM3_Init();
-  //MX_FSMC_Init();
+  MX_USART1_UART_Init();
+  MX_USB_DEVICE_Init();
+  MX_DAC_Init();
+  MX_TIM3_Init();
+  MX_FSMC_Init();
   /* USER CODE BEGIN 2 */
 
     // Получаем данные конфигурации из pin_69.h
@@ -297,82 +400,45 @@ int main(void)
 
     // Вызов функции загрузки конфигурации
     FPGA_SendConfig(config_data, config_size);
+
+    // Инициализация указателя на регистр ПЛИС
+    fpga_reg = (volatile uint16_t *)FPGA_BASE_ADDRESS;
+
+    // Отправка приветственного сообщения
+    SendUSBDebugMessage("System initialized");
+    SendUSBDebugMessage("Send '1' to read FPGA data");
+    SendUSBDebugMessage("Send 'T' to read temperature");
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
     while (1) {
-//    	char debug_msg[100];
-//
-//    	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);
-//    	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET);
-//    	snprintf(debug_msg, sizeof(debug_msg), "STATE: PC8=%d, PA15=%d, PB8=%d, PC9=%d, PC12=%d, PC10=%d\r\n",
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8),
-//    	         HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15),
-//    	         HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_12),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_10));
-//    	CDC_Transmit_FS((uint8_t*)debug_msg, strlen(debug_msg));
-//    	HAL_Delay(10);
-//
-//    	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_SET);
-//    	snprintf(debug_msg, sizeof(debug_msg), "STATE: PC8=%d, PA15=%d, PB8=%d, PC9=%d, PC12=%d, PC10=%d\r\n",
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8),
-//    	         HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15),
-//    	         HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_12),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_10));
-//    	CDC_Transmit_FS((uint8_t*)debug_msg, strlen(debug_msg));
-//    	HAL_Delay(10);
-//
-//    	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET);
-//    	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_RESET);
-//    	snprintf(debug_msg, sizeof(debug_msg), "STATE: PC8=%d, PA15=%d, PB8=%d, PC9=%d, PC12=%d, PC10=%d\r\n",
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8),
-//    	         HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15),
-//    	         HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_12),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_10));
-//    	CDC_Transmit_FS((uint8_t*)debug_msg, strlen(debug_msg));
-//    	HAL_Delay(100);
-//
-//    	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_12, GPIO_PIN_SET);
-//    	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
-//    	snprintf(debug_msg, sizeof(debug_msg), "STATE: PC8=%d, PA15=%d, PB8=%d, PC9=%d, PC12=%d, PC10=%d\r\n",
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8),
-//    	         HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15),
-//    	         HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_12),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_10));
-//    	CDC_Transmit_FS((uint8_t*)debug_msg, strlen(debug_msg));
-//    	HAL_Delay(1);
-//
-//    	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
-//    	snprintf(debug_msg, sizeof(debug_msg), "STATE: PC8=%d, PA15=%d, PB8=%d, PC9=%d, PC12=%d, PC10=%d\r\n",
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8),
-//    	         HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15),
-//    	         HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_12),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_10));
-//    	CDC_Transmit_FS((uint8_t*)debug_msg, strlen(debug_msg));
-//    	HAL_Delay(1);
-//
-//    	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);
-//    	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_SET);
-//    	snprintf(debug_msg, sizeof(debug_msg), "STATE: PC8=%d, PA15=%d, PB8=%d, PC9=%d, PC12=%d, PC10=%d\r\n",
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8),
-//    	         HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15),
-//    	         HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_12),
-//    	         HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_10));
-//    	CDC_Transmit_FS((uint8_t*)debug_msg, strlen(debug_msg));
-//    	HAL_Delay(1000);
+        // Точное циклическое изменение напряжения каждые 3 секунды
+        if (HAL_GetTick() - dac_last_update > 3000) {
+            dac_last_update = HAL_GetTick();
+
+            if (dac_voltage < 0.1f) {          // Если ~0V
+                Set_DAC_Voltage(0.300f);       // Устанавливаем точно 0.3V
+            }
+            else if (dac_voltage < 0.6f) {     // Если ~0.3V
+                Set_DAC_Voltage(1.000f);       // Устанавливаем точно 1.0V
+            }
+            else {                             // Если ~1.0V
+                Set_DAC_Voltage(0.000f);       // Сбрасываем в 0V
+            }
+
+            // Также отправляем температуру каждые 3 секунды
+            Send_Temperature_To_USB();
+        }
+
+        // Обработка команд USB
+        if(new_data_received) {
+            new_data_received = 0;
+            ProcessUSBCommand(usb_rx_buffer[0]); // Обрабатываем первую байту команды
+            memset((void*)usb_rx_buffer, 0, sizeof(usb_rx_buffer));
+        }
+
+        HAL_Delay(1);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -380,6 +446,8 @@ int main(void)
   /* USER CODE END 3 */
 }
 
+// Остальной код (SystemClock_Config, MX_GPIO_Init, MX_USART1_UART_Init, MX_DAC_Init,
+// MX_TIM3_Init, MX_FSMC_Init, Error_Handler) остается без изменений
 /**
   * @brief System Clock Configuration
   * @retval None
