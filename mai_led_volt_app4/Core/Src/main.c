@@ -17,7 +17,6 @@
   * - PD6 to FPGA START_FGPA (start signal)
   */
 /* USER CODE END Header */
-
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "usb_device.h"
@@ -28,26 +27,17 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include "usbd_cdc_if.h"
-#include "pin_69.h" // Файл с конфигурацией ПЛИС (массив uint8_t fpga_config[])
 #include "stm32f4xx_hal.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-#define DATA_VALUES_COUNT 10000       // Количество значений в ПЛИС (соответствует коду ПЛИС)
-#define VALUES_PER_LINE 10            // Количество значений в строке вывода
 
-typedef struct {
-    uint16_t data[DATA_VALUES_COUNT]; // Буфер для хранения данных от ПЛИС (12-битные значения)
-    bool data_ready;                  // Флаг готовности данных
-    uint8_t data_count;               // Количество считанных данных
-} FPGA_Data;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FPGA_BASE_ADDRESS 0x60000000  // Базовый адрес Bank1 (NE1)
-#define START_PULSE_DURATION_NS 200   // Длительность стартового импульса в наносекундах
+#define FSMC_BASE_ADDR  ((volatile uint16_t*)0x60000000)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -64,17 +54,12 @@ UART_HandleTypeDef huart1;
 SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
-FPGA_Data fpga_data;                 // Структура для хранения данных ПЛИС
 char usb_msg[128];                   // Буфер для USB сообщений
-volatile uint16_t *fpga_reg;         // Указатель на регистр ПЛИС
+//volatile uint16_t *fpga_reg;         // Указатель на регистр ПЛИС
 
 // Добавляем объявления переменных из usbd_cdc_if.c
 extern volatile uint8_t usb_rx_buffer[64];
 extern volatile uint8_t new_data_received;
-
-// Добавляем переменные для DAC управления
-float dac_voltage = 0.0f;
-uint32_t dac_last_update = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -85,277 +70,12 @@ static void MX_DAC_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_FSMC_Init(void);
 /* USER CODE BEGIN PFP */
-void ReadFPGAData(void);
-void PrintDataToUSB(void);
-void SendUSBDebugMessage(const char *message);
-void GenerateStartPulse(void);
-void ProcessUSBCommand(uint8_t cmd);
-void FPGA_SendConfig(uint8_t *config_data, uint32_t size);
-void Set_DAC_Voltage(float voltage);
-uint16_t Read_Thermocouple_Temperature(void); // Функция для чтения температуры с термопары
-void Send_Temperature_To_USB(void);           // Функция для отправки температуры по USB
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 /**
-  * @brief Чтение температуры с термопары
-  * @return Сырое значение температуры (12 бит)
-  */
-uint16_t Read_Thermocouple_Temperature(void) {
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-    uint16_t raw_data = 0;
-
-    // Настройка PC11 (DATA) как входа
-    GPIO_InitStruct.Pin = GPIO_PIN_11;
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-    // Активация чипа (активный низкий уровень на PC8 - термопара CS)
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
-
-    // Задержка для стабилизации (минимум 100ns по даташиту)
-    for(volatile int i = 0; i < 10; i++);
-
-    // Чтение 16 бит данных
-    for(uint8_t i = 0; i < 16; i++) {
-        // Генерация тактового импульса (PC10 - DCLK)
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
-        for(volatile int j = 0; j < 5; j++); // Короткая задержка
-
-        // Чтение бита данных (MSB first)
-        if(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_11)) {
-            raw_data |= (1 << (15 - i));
-        }
-
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
-        for(volatile int j = 0; j < 5; j++); // Короткая задержка
-    }
-
-    // Деактивация чипа
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);
-
-    // Проверка на разомкнутую цепь (бит D2)
-    if(raw_data & 0x04) {
-        return 0xFFFF; // Код ошибки - разомкнутая цепь
-    }
-
-    // Извлечение 12-битного значения температуры (биты D14-D3)
-    raw_data >>= 3; // Убираем 3 младших бита (D2-D0)
-    return raw_data & 0x0FFF; // Оставляем только 12 бит температуры
-}
-
-/**
-  * @brief Отправка температуры по USB
-  */
-void Send_Temperature_To_USB(void) {
-    uint16_t raw_temp = Read_Thermocouple_Temperature();
-
-    if(raw_temp == 0xFFFF) {
-        CDC_Transmit_FS((uint8_t*)"Error: Thermocouple open circuit!\r\n", 34);
-        return;
-    }
-
-    // Конверсия в градусы (каждый LSB = 0.25°C)
-    float temperature = (float)raw_temp * 0.25f;
-
-    char temp_msg[32];
-    snprintf(temp_msg, sizeof(temp_msg), "Temperature: %.2f C\r\n", temperature);
-    CDC_Transmit_FS((uint8_t*)temp_msg, strlen(temp_msg));
-}
-
-/**
-  * @brief Чтение данных из ПЛИС через FSMC интерфейс
-  * @note Читает 10000 значений по 12 бит из ПЛИС (каждое значение в младших 12 битах 16-битного слова)
-  * @note ПЛИС автоматически переключает индекс данных при каждом чтении
-  */
-void ReadFPGAData(void) {
-    fpga_data.data_count = 0;
-    fpga_data.data_ready = false;
-
-    __disable_irq(); // Отключаем прерывания для атомарного чтения
-
-    for (int i = 0; i < DATA_VALUES_COUNT; i++) {
-        // Читаем значение - ПЛИС автоматически переключает индекс при каждом чтении
-        uint16_t value = fpga_reg[0];
-        fpga_data.data[i] = value & 0x0FFF; // Извлекаем 12-битное значение
-        fpga_data.data_count++;
-
-        // Небольшая задержка между чтениями для стабильности
-        for(volatile int j = 0; j < 10; j++);
-    }
-
-    __enable_irq(); // Включаем прерывания обратно
-    fpga_data.data_ready = true;
-}
-
-/**
-  * @brief Вывод данных через USB CDC
-  * @note Форматирует данные в виде таблицы 10x10 значений
-  */
-void PrintDataToUSB(void) {
-    if (!fpga_data.data_ready) return;
-
-    // Формируем заголовок
-    snprintf(usb_msg, sizeof(usb_msg), "FPGA Data [0-%d]:\r\n", DATA_VALUES_COUNT-1);
-    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
-    HAL_Delay(10);
-
-    // Формируем строки с данными
-    char data_line[64] = "";
-    for (int i = 0; i < DATA_VALUES_COUNT; i++) {
-        char val_str[8];
-        snprintf(val_str, sizeof(val_str), "%4d ", fpga_data.data[i]);
-        strncat(data_line, val_str, sizeof(data_line) - strlen(data_line) - 1);
-
-        // Если строка заполнена или это последнее значение
-        if ((i+1) % VALUES_PER_LINE == 0 || i == DATA_VALUES_COUNT-1) {
-            strncat(data_line, "\r\n", sizeof(data_line) - strlen(data_line) - 1);
-            CDC_Transmit_FS((uint8_t*)data_line, strlen(data_line));
-            HAL_Delay(10);
-            data_line[0] = '\0'; // Очищаем строку
-        }
-    }
-}
-
-/**
-  * @brief Отправка отладочного сообщения через USB
-  * @param message Текст сообщения
-  */
-void SendUSBDebugMessage(const char *message) {
-    snprintf(usb_msg, sizeof(usb_msg), "[%lu] %s\r\n", HAL_GetTick(), message);
-    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
-    HAL_Delay(10); // Задержка для стабильной работы USB
-}
-
-/**
-  * @brief Генерация стартового импульса для ПЛИС
-  * @note Импульс длительностью 200 нс на пине PD6
-  */
-void GenerateStartPulse(void) {
-    // Устанавливаем высокий уровень на PD6
-    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_SET);
-
-    // Задержка для формирования импульса 200 нс
-    // При тактовой частоте 168 МГц (5.95 нс на цикл) нужно ~34 цикла
-    for(volatile int i = 0; i < 34; i++);
-
-    // Устанавливаем низкий уровень на PD6
-    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_RESET);
-
-    SendUSBDebugMessage("Start pulse generated");
-}
-
-/**
-  * @brief Обработка команд от USB
-  * @param cmd Полученная команда
-  */
-void ProcessUSBCommand(uint8_t cmd) {
-    switch(cmd) {
-        case '1': // Стартовая команда
-            GenerateStartPulse();
-            ReadFPGAData();
-
-            if (fpga_data.data_ready) {
-                SendUSBDebugMessage("Data received from FPGA:");
-                PrintDataToUSB();
-                fpga_data.data_ready = false;
-            }
-            break;
-
-        case 'T': // Команда для чтения температуры
-            Send_Temperature_To_USB();
-            break;
-
-        default:
-            // Неизвестная команда
-            SendUSBDebugMessage("Unknown command received");
-            break;
-    }
-}
-
-/**
-  * @brief Отправка конфигурации в ПЛИС
-  * @param config_data Указатель на данные конфигурации
-  * @param size Размер данных конфигурации
-  */
-void FPGA_SendConfig(uint8_t *config_data, uint32_t size) {
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    // 1. Настройка пинов для конфигурации
-    // PC11 - DATA (выход)
-    GPIO_InitStruct.Pin = GPIO_PIN_11;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-    // 2. Последовательность сброса ПЛИС
-    // PC8 - термопара CS (активный низкий), устанавливаем в 1
-    // PB8 - CSO (активный низкий), устанавливаем в 1
-    // PA15 - nCONFIG (активный низкий), устанавливаем в 0 для сброса
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);   // TH_CS = 1
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);   // CSO = 1
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET); // nCONFIG = 0
-    HAL_Delay(100); // Длительный сброс (100 мс)
-
-    // 3. Запуск конфигурации
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_RESET);  // CE = 0
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_SET);   // nCONFIG = 1
-    HAL_Delay(10); // Ожидание готовности ПЛИС
-
-    // 4. Отправка данных конфигурации
-    for (uint32_t i = 0; i < size; i++) {
-        uint8_t byte = config_data[i];
-        for (int bit = 0; bit < 8; bit++) {
-            // Установка бита данных (LSB first) на PC11
-            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, (byte & 0x01) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-            byte >>= 1;
-
-            // Тактовый импульс на PC10 (минимум 50 нс)
-            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
-            __NOP(); __NOP(); __NOP(); __NOP(); // Короткая задержка (~20 нс при 168 MHz)
-            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
-            __NOP(); __NOP(); // Пауза между битами
-        }
-    }
-
-    // 5. Завершение конфигурации
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_SET);    // CE = 1
-    HAL_Delay(1);
-
-    // 6. Дополнительные тактовые импульсы
-    for (int i = 0; i < 8; i++) {
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
-        __NOP(); __NOP();
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
-        __NOP(); __NOP();
-    }
-
-    // 7. Возврат в исходное состояние
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);  // TH_CS = 0
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET);  // CSO = 0
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_RESET); // DATA = 0
-}
-
-/**
-  * @brief Установка напряжения на DAC
-  * @param voltage Напряжение от 0.0 до 1.0 В
-  */
-void Set_DAC_Voltage(float voltage) {
-    if (voltage < 0) voltage = 0;
-    if (voltage > 1) voltage = 1;
-
-    uint32_t dac_value = (voltage / 3.3f) * 4095;
-    HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
-    HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
-    dac_voltage = voltage;
-
-    // Отправляем текущее напряжение по USB
-    char voltage_msg[32];
-    snprintf(voltage_msg, sizeof(voltage_msg), "DAC Voltage: %.3f V\r\n", dac_voltage);
-    CDC_Transmit_FS((uint8_t*)voltage_msg, strlen(voltage_msg));
 }
 /* USER CODE END 0 */
 
@@ -365,8 +85,10 @@ void Set_DAC_Voltage(float voltage) {
   */
 int main(void)
 {
-  /* USER CODE BEGIN 1 */
 
+  /* USER CODE BEGIN 1 */
+	  uint16_t test_data = 0xA55A;  // Тестовый паттерн
+	  uint16_t received_data = 0;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -394,51 +116,30 @@ int main(void)
   MX_FSMC_Init();
   /* USER CODE BEGIN 2 */
 
-    // Получаем данные конфигурации из pin_69.h
-    uint8_t *config_data = fpga_config; // Используем массив из pin_69.h
-    uint32_t config_size = sizeof(fpga_config); // Размер автоматически вычисляется
-
-    // Вызов функции загрузки конфигурации
-    FPGA_SendConfig(config_data, config_size);
-
-    // Инициализация указателя на регистр ПЛИС
-    fpga_reg = (volatile uint16_t *)FPGA_BASE_ADDRESS;
-
-    // Отправка приветственного сообщения
-    SendUSBDebugMessage("System initialized");
-    SendUSBDebugMessage("Send '1' to read FPGA data");
-    SendUSBDebugMessage("Send 'T' to read temperature");
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-    while (1) {
-        // Точное циклическое изменение напряжения каждые 3 секунды
-        if (HAL_GetTick() - dac_last_update > 3000) {
-            dac_last_update = HAL_GetTick();
+  while (1)
+  {// Запись в ПЛИС
+      *FSMC_BASE_ADDR = test_data;
 
-            if (dac_voltage < 0.1f) {          // Если ~0V
-                Set_DAC_Voltage(0.300f);       // Устанавливаем точно 0.3V
-            }
-            else if (dac_voltage < 0.6f) {     // Если ~0.3V
-                Set_DAC_Voltage(1.000f);       // Устанавливаем точно 1.0V
-            }
-            else {                             // Если ~1.0V
-                Set_DAC_Voltage(0.000f);       // Сбрасываем в 0V
-            }
+      // Чтение из ПЛИС
+      received_data = *FSMC_BASE_ADDR;
 
-            // Также отправляем температуру каждые 3 секунды
-            Send_Temperature_To_USB();
-        }
+      // Проверка совпадения данных
+      if (received_data == test_data) {
+          // Индикация
+          HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
 
-        // Обработка команд USB
-        if(new_data_received) {
-            new_data_received = 0;
-            ProcessUSBCommand(usb_rx_buffer[0]); // Обрабатываем первую байту команды
-            memset((void*)usb_rx_buffer, 0, sizeof(usb_rx_buffer));
-        }
+          // Отправка по USB только при успешном обмене
+          snprintf((char*)usb_msg, sizeof(usb_msg), "[%lu] SUCCESS: W=0x%04X R=0x%04X\r\n",
+                  HAL_GetTick(), test_data, received_data);
+          CDC_Transmit_FS(usb_msg, strlen((char*)usb_msg));
 
-        HAL_Delay(1);
+      }
+      HAL_Delay(100);
+      test_data++;  // Меняем данные для проверки
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -446,8 +147,6 @@ int main(void)
   /* USER CODE END 3 */
 }
 
-// Остальной код (SystemClock_Config, MX_GPIO_Init, MX_USART1_UART_Init, MX_DAC_Init,
-// MX_TIM3_Init, MX_FSMC_Init, Error_Handler) остается без изменений
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -696,26 +395,26 @@ static void MX_FSMC_Init(void)
   hsram1.Extended = FSMC_NORSRAM_EXTENDED_DEVICE;
   /* hsram1.Init */
   hsram1.Init.NSBank = FSMC_NORSRAM_BANK1;
-  hsram1.Init.DataAddressMux = FSMC_DATA_ADDRESS_MUX_ENABLE;
+  hsram1.Init.DataAddressMux = FSMC_DATA_ADDRESS_MUX_DISABLE;
   hsram1.Init.MemoryType = FSMC_MEMORY_TYPE_PSRAM;
   hsram1.Init.MemoryDataWidth = FSMC_NORSRAM_MEM_BUS_WIDTH_16;
   hsram1.Init.BurstAccessMode = FSMC_BURST_ACCESS_MODE_DISABLE;
   hsram1.Init.WaitSignalPolarity = FSMC_WAIT_SIGNAL_POLARITY_LOW;
   hsram1.Init.WrapMode = FSMC_WRAP_MODE_DISABLE;
   hsram1.Init.WaitSignalActive = FSMC_WAIT_TIMING_BEFORE_WS;
-  hsram1.Init.WriteOperation = FSMC_WRITE_OPERATION_DISABLE;
+  hsram1.Init.WriteOperation = FSMC_WRITE_OPERATION_ENABLE;
   hsram1.Init.WaitSignal = FSMC_WAIT_SIGNAL_DISABLE;
   hsram1.Init.ExtendedMode = FSMC_EXTENDED_MODE_DISABLE;
   hsram1.Init.AsynchronousWait = FSMC_ASYNCHRONOUS_WAIT_DISABLE;
   hsram1.Init.WriteBurst = FSMC_WRITE_BURST_DISABLE;
   hsram1.Init.PageSize = FSMC_PAGE_SIZE_NONE;
   /* Timing */
-  Timing.AddressSetupTime = 15;
-  Timing.AddressHoldTime = 15;
-  Timing.DataSetupTime = 255;
-  Timing.BusTurnAroundDuration = 15;
-  Timing.CLKDivision = 16;
-  Timing.DataLatency = 17;
+  Timing.AddressSetupTime = 2;
+  Timing.AddressHoldTime = 1;
+  Timing.DataSetupTime =  5;
+  Timing.BusTurnAroundDuration = 1;
+  Timing.CLKDivision = 2;
+  Timing.DataLatency = 2;
   Timing.AccessMode = FSMC_ACCESS_MODE_A;
   /* ExtTiming */
 

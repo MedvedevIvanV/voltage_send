@@ -2,6 +2,8 @@
 CAD.formats=
 CAD.pinconfig=
 CAD.provider=
+FSMC.IPParameters=WriteOperation1
+FSMC.WriteOperation1=FSMC_WRITE_OPERATION_ENABLE
 File.Version=6
 GPIO.groupedBy=Group By Peripherals
 KeepUserPlacement=false
