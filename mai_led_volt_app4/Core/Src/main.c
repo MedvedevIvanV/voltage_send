@@ -1,20 +1,5 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body for STM32F405VGT6 to FPGA communication via FSMC
-  ******************************************************************************
-  * @attention
-  *
-  * This code configures FSMC interface to communicate with FPGA (10CL006YE144I7G)
-  * without external memory. It reads ADC data from FPGA and sends it via USB CDC.
-  *
-  * Connections:
-  * - FSMC_D[15:0] to FPGA data bus
-  * - FSMC_NOE to FPGA_OE (read enable)
-  * - FSMC_NWE to FPGA_WE (write enable, not used in this case)
-  * - FSMC_NE1 to FPGA chip select
-  * - PD6 to FPGA START_FGPA (start signal)
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
@@ -27,17 +12,18 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include "usbd_cdc_if.h"
-#include "stm32f4xx_hal.h"
+#include "arm_math.h"
+#include <stdlib.h>
+#include "a-scan.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FSMC_BASE_ADDR  ((volatile uint16_t*)0x60000000)
+#define START_PULSE_DURATION_NS 200   // Длительность стартового импульса в наносекундах
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -55,11 +41,40 @@ SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
 char usb_msg[128];                   // Буфер для USB сообщений
-//volatile uint16_t *fpga_reg;         // Указатель на регистр ПЛИС
 
 // Добавляем объявления переменных из usbd_cdc_if.c
 extern volatile uint8_t usb_rx_buffer[64];
 extern volatile uint8_t new_data_received;
+
+
+#define VALUES_PER_LINE 10
+#define DATA_VALUES_COUNT 4600
+
+extern const float measurement_data[];
+
+float32_t normalized_data[DATA_VALUES_COUNT];
+float32_t autocorrelation_result[DATA_VALUES_COUNT];
+float32_t mean, std_dev;
+
+arm_status status;
+
+// Добавленные переменные
+uint32_t start_index = 100;          // Начальный индекс для среза массива
+float wave_speed = 3200.0;           // Скорость волны в м/с
+float frequency = 12.5e-9;           // Частота в секундах (12.5 нс)
+float one_point_mm;                  // Разрешение одного отсчета в мм
+uint32_t max_index;                  // Индекс максимального значения АКФ
+
+// Добавляем новые переменные
+#define THRESHOLD 2080.0f
+#define CYCLES_NUMBER 10
+#define FLASH_DATA_ADDRESS 0x08080000  // Адрес во FLASH памяти для сохранения данных
+
+float32_t flash_stored_data[DATA_VALUES_COUNT];
+float32_t working_data[DATA_VALUES_COUNT];  // Рабочий массив для модификаций
+uint8_t cycles_completed = 0;
+bool data_stored_in_flash = false;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -70,12 +85,256 @@ static void MX_DAC_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_FSMC_Init(void);
 /* USER CODE BEGIN PFP */
-
+void SendUSBDebugMessage(const char *message);
+void GenerateStartPulse(void);
+void ProcessUSBCommand(uint8_t cmd);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+
 /**
+  * @brief Отправка отладочного сообщения через USB
+  * @param message Текст сообщения
+  */
+void SendUSBDebugMessage(const char *message) {
+    snprintf(usb_msg, sizeof(usb_msg), "[%lu] %s\r\n", HAL_GetTick(), message);
+    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    HAL_Delay(10); // Задержка для стабильной работы USB
+}
+
+/**
+  * @brief Генерация стартового импульса для ПЛИС
+  * @note Импульс длительностью 200 нс на пине PD6
+  */
+void GenerateStartPulse(void) {
+    // Устанавливаем высокий уровень на PD6
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_SET);
+
+    // Задержка для формирования импульса 200 нс
+    // При тактовой частоте 168 МГц (5.95 нс на цикл) нужно ~34 цикла
+    for(volatile int i = 0; i < 34; i++);
+
+    // Устанавливаем низкий уровень на PD6
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_RESET);
+
+    SendUSBDebugMessage("Start pulse generated");
+}
+
+/**
+  * @brief Обработка команд от USB
+  * @param cmd Полученная команда
+  */
+void ProcessUSBCommand(uint8_t cmd) {
+    switch(cmd) {
+        case '1': // Стартовая команда
+            GenerateStartPulse();
+            break;
+
+        default:
+            // Неизвестная команда
+            SendUSBDebugMessage("Unknown command received");
+            break;
+    }
+}
+
+void NormalizeData(void)
+{
+    // Используем normalized_data как входной массив вместо measurement_data
+    arm_mean_f32(normalized_data, DATA_VALUES_COUNT, &mean);
+
+    float32_t subtracted_mean[DATA_VALUES_COUNT];
+    arm_offset_f32(normalized_data, -mean, subtracted_mean, DATA_VALUES_COUNT);
+
+    arm_std_f32(subtracted_mean, DATA_VALUES_COUNT, &std_dev);
+
+    if (std_dev != 0.0f) {
+        arm_scale_f32(subtracted_mean, 1.0f/std_dev, normalized_data, DATA_VALUES_COUNT);
+    } else {
+        arm_copy_f32(subtracted_mean, normalized_data, DATA_VALUES_COUNT);
+    }
+}
+
+void CalculateAutocorrelation(void)
+{
+    for (uint32_t lag = 0; lag < DATA_VALUES_COUNT; lag++) {
+        double sum = 0.0; // Накопление в double для точности
+        uint32_t count = DATA_VALUES_COUNT - lag;
+
+        for (uint32_t i = 0; i < count; i++) {
+            // Накопление суммы в double для большей точности
+            sum += (double)normalized_data[i] * (double)normalized_data[i + lag];
+        }
+
+        // Вычисление среднего значения и взятие модуля
+        double result = sum / count;
+
+        // Сохранение результата по модулю в float32_t
+        autocorrelation_result[lag] = (float32_t)fabs(result);
+    }
+}
+
+/**
+  * @brief Поиск индекса максимального значения автокорреляционной функции
+  * @retval Индекс максимального значения в диапазоне [start_index:N-start_index]
+  */
+uint32_t FindMaxAutocorrelationIndex(void)
+{
+    float32_t max_value = 0.0f;
+    uint32_t max_idx = start_index;
+
+    // Поиск максимума в диапазоне [start_index:DATA_VALUES_COUNT-start_index]
+    for (uint32_t i = start_index; i < DATA_VALUES_COUNT - start_index; i++) {
+        if (autocorrelation_result[i] > max_value) {
+            max_value = autocorrelation_result[i];
+            max_idx = i;
+        }
+    }
+
+    return max_idx;
+}
+
+/**
+  * @brief Расчет толщины и отправка результата по USB
+  */
+void CalculateAndSendThickness(void)
+{
+    // Расчет разрешения одного отсчета в мм
+    one_point_mm = 1.0f / (wave_speed * 1000.0f * frequency);
+
+    // Поиск индекса максимального значения АКФ
+    max_index = FindMaxAutocorrelationIndex();
+
+    // Расчет толщины
+    float thickness = max_index / (2.0f * one_point_mm);
+
+    // Отправка результата по USB
+    snprintf(usb_msg, sizeof(usb_msg), "Thickness: %.3f\r\n", thickness);
+    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    HAL_Delay(10);
+}
+
+void PrintMeasurementDataToUSB(void)
+{
+    // Формируем заголовок
+    snprintf(usb_msg, sizeof(usb_msg), "Autocorrelation Result [0-%d]:\r\n", DATA_VALUES_COUNT-1);
+    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    HAL_Delay(10);
+
+    // Формируем строки с данными
+    char data_line[128] = "";
+
+    for (int i = 0; i < DATA_VALUES_COUNT; i++) {
+        char val_str[16];
+
+        // Форматируем float значение с двумя знаками после запятой
+        snprintf(val_str, sizeof(val_str), "%7.2f ", autocorrelation_result[i]);
+        strncat(data_line, val_str, sizeof(data_line) - strlen(data_line) - 1);
+
+        // Если строка заполнена или это последнее значение
+        if ((i+1) % VALUES_PER_LINE == 0 || i == DATA_VALUES_COUNT-1) {
+            strncat(data_line, "\r\n", sizeof(data_line) - strlen(data_line) - 1);
+            CDC_Transmit_FS((uint8_t*)data_line, strlen(data_line));
+            HAL_Delay(10);
+            data_line[0] = '\0'; // Очищаем строку
+        }
+    }
+}
+
+/**
+  * @brief Проверка данных на превышение threshold
+  * @param data Массив данных для проверки
+  * @retval true если все значения в пределах threshold, false если есть превышения
+  */
+bool CheckThreshold(const float32_t* data) {
+    for (uint32_t i = 0; i < DATA_VALUES_COUNT; i++) {
+        if (fabsf(data[i]) > THRESHOLD) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+  * @brief Сохранение данных во FLASH память
+  * @param data Массив данных для сохранения
+  */
+void SaveToFlash(const float32_t* data) {
+    // Разблокируем FLASH память
+    HAL_FLASH_Unlock();
+
+    // Очищаем страницу FLASH
+    FLASH_EraseInitTypeDef EraseInitStruct;
+    uint32_t PageError = 0;
+
+    EraseInitStruct.TypeErase = FLASH_TYPEERASE_SECTORS;
+    EraseInitStruct.Sector = FLASH_SECTOR_11;  // Выберите подходящий сектор
+    EraseInitStruct.NbSectors = 1;
+    EraseInitStruct.VoltageRange = FLASH_VOLTAGE_RANGE_3;
+
+    HAL_FLASHEx_Erase(&EraseInitStruct, &PageError);
+
+    // Записываем данные во FLASH
+    uint32_t* flash_ptr = (uint32_t*)FLASH_DATA_ADDRESS;
+    uint32_t* data_ptr = (uint32_t*)data;
+
+    for (uint32_t i = 0; i < DATA_VALUES_COUNT; i++) {
+        HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, (uint32_t)flash_ptr, *data_ptr);
+        flash_ptr++;
+        data_ptr++;
+    }
+
+    // Блокируем FLASH память
+    HAL_FLASH_Lock();
+
+    data_stored_in_flash = true;
+}
+
+/**
+  * @brief Чтение данных из FLASH памяти
+  * @param data Буфер для сохранения прочитанных данных
+  */
+void ReadFromFlash(float32_t* data) {
+    uint32_t* flash_ptr = (uint32_t*)FLASH_DATA_ADDRESS;
+    uint32_t* data_ptr = (uint32_t*)data;
+
+    for (uint32_t i = 0; i < DATA_VALUES_COUNT; i++) {
+        *data_ptr = *flash_ptr;
+        flash_ptr++;
+        data_ptr++;
+    }
+}
+
+/**
+  * @brief Усреднение текущих данных с данными из FLASH
+  * @param current_data Текущий массив данных
+  */
+void AverageWithFlashData(float32_t* current_data) {
+    float32_t flash_data[DATA_VALUES_COUNT];
+    ReadFromFlash(flash_data);
+
+    for (uint32_t i = 0; i < DATA_VALUES_COUNT; i++) {
+        flash_data[i] = (flash_data[i] + current_data[i]) / 2.0f;
+    }
+
+    SaveToFlash(flash_data);
+}
+
+/**
+  * @brief Копирование исходных данных в рабочий массив и добавление шума
+  * @param dest Массив назначения
+  * @param src Исходный массив
+  */
+void CopyAndAddNoise(float32_t* dest, const float32_t* src) {
+    // Копируем исходные данные
+    arm_copy_f32((float32_t*)src, dest, DATA_VALUES_COUNT);
+
+    // Добавляем случайный шум ±50% от значения
+    for (uint32_t i = 0; i < DATA_VALUES_COUNT; i++) {
+        float noise = (rand() % 10000 - 5000) / 10000.0f;  // ±50%
+        dest[i] = dest[i] * (1.0f + noise);
+    }
 }
 /* USER CODE END 0 */
 
@@ -85,10 +344,8 @@ static void MX_FSMC_Init(void);
   */
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
-	  uint16_t test_data = 0xA55A;  // Тестовый паттерн
-	  uint16_t received_data = 0;
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -115,38 +372,70 @@ int main(void)
   MX_TIM3_Init();
   MX_FSMC_Init();
   /* USER CODE BEGIN 2 */
+  HAL_TIM_Base_Start(&htim3);
+
+  // Инициализация добавленных переменных
+  one_point_mm = 1.0f / (wave_speed * 1000.0f * frequency);
+
+  // Инициализация генератора случайных чисел
+  srand(HAL_GetTick());
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {// Запись в ПЛИС
-      *FSMC_BASE_ADDR = test_data;
+  while (1) {
+      // Проверяем наличие команды от USB
+      if (new_data_received) {
+          cycles_completed = 0;
+          data_stored_in_flash = false;
 
-      // Чтение из ПЛИС
-      received_data = *FSMC_BASE_ADDR;
+          // Основной цикл обработки 10 циклов
+          while (cycles_completed < CYCLES_NUMBER) {
+              // Копируем исходные данные и добавляем шум
+              CopyAndAddNoise(working_data, measurement_data);
 
-      // Проверка совпадения данных
-      if (received_data == test_data) {
-          // Индикация
-          HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+              // ПРОВЕРКА НА ПОРОГ: если хотя бы одна точка превысила - переходим к следующему циклу
+              if (!CheckThreshold(working_data)) {
+                  SendUSBDebugMessage("Not written to FLASH: array exceeded threshold");
+                  cycles_completed++;
+                  continue; // Немедленно переходим к следующему циклу
+              }
 
-          // Отправка по USB только при успешном обмене
-          snprintf((char*)usb_msg, sizeof(usb_msg), "[%lu] SUCCESS: W=0x%04X R=0x%04X\r\n",
-                  HAL_GetTick(), test_data, received_data);
-          CDC_Transmit_FS(usb_msg, strlen((char*)usb_msg));
+              // Если все точки прошли проверку - запись/усреднение во FLASH
+              if (!data_stored_in_flash) {
+                  // Первое сохранение во FLASH
+                  SaveToFlash(working_data);
+                  SendUSBDebugMessage("First written to FLASH");
+                  data_stored_in_flash = true;
+              } else {
+                  // Усреднение с данными из FLASH
+                  AverageWithFlashData(working_data);
+                  SendUSBDebugMessage("Successfully written to FLASH with averaging");
+              }
 
+              cycles_completed++;
+          }
+
+          // После завершения всех 10 циклов - обработка финальных данных
+          if (data_stored_in_flash) {
+              ReadFromFlash(normalized_data);
+              NormalizeData();
+              CalculateAutocorrelation();
+              CalculateAndSendThickness();
+              PrintMeasurementDataToUSB();
+          }
+
+          new_data_received = 0; // Сбрасываем флаг
       }
+
       HAL_Delay(100);
-      test_data++;  // Меняем данные для проверки
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
   }
-  /* USER CODE END 3 */
-}
+  /* USER CODE END WHILE */
 
+  /* USER CODE BEGIN 3 */
+/* USER CODE END 3 */
+}
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -395,7 +684,7 @@ static void MX_FSMC_Init(void)
   hsram1.Extended = FSMC_NORSRAM_EXTENDED_DEVICE;
   /* hsram1.Init */
   hsram1.Init.NSBank = FSMC_NORSRAM_BANK1;
-  hsram1.Init.DataAddressMux = FSMC_DATA_ADDRESS_MUX_DISABLE;
+  hsram1.Init.DataAddressMux = FSMC_DATA_ADDRESS_MUX_ENABLE;
   hsram1.Init.MemoryType = FSMC_MEMORY_TYPE_PSRAM;
   hsram1.Init.MemoryDataWidth = FSMC_NORSRAM_MEM_BUS_WIDTH_16;
   hsram1.Init.BurstAccessMode = FSMC_BURST_ACCESS_MODE_DISABLE;
@@ -409,12 +698,12 @@ static void MX_FSMC_Init(void)
   hsram1.Init.WriteBurst = FSMC_WRITE_BURST_DISABLE;
   hsram1.Init.PageSize = FSMC_PAGE_SIZE_NONE;
   /* Timing */
-  Timing.AddressSetupTime = 2;
-  Timing.AddressHoldTime = 1;
-  Timing.DataSetupTime =  5;
-  Timing.BusTurnAroundDuration = 1;
-  Timing.CLKDivision = 2;
-  Timing.DataLatency = 2;
+  Timing.AddressSetupTime = 15;
+  Timing.AddressHoldTime = 15;
+  Timing.DataSetupTime = 255;
+  Timing.BusTurnAroundDuration = 15;
+  Timing.CLKDivision = 16;
+  Timing.DataLatency = 17;
   Timing.AccessMode = FSMC_ACCESS_MODE_A;
   /* ExtTiming */
 
