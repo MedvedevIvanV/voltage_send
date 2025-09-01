@@ -24,6 +24,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define START_PULSE_DURATION_NS 200   // Длительность стартового импульса в наносекундах
+#define USB_RX_BUFFER_SIZE 256
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -40,12 +41,12 @@ UART_HandleTypeDef huart1;
 SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
-char usb_msg[128];                   // Буфер для USB сообщений
+char usb_msg[256];                   // Буфер для USB сообщений
 
 // Добавляем объявления переменных из usbd_cdc_if.c
-extern volatile uint8_t usb_rx_buffer[64];
+extern volatile uint8_t usb_rx_buffer[USB_RX_BUFFER_SIZE];
 extern volatile uint8_t new_data_received;
-
+extern volatile uint16_t usb_rx_index;
 
 #define VALUES_PER_LINE 10
 #define DATA_VALUES_COUNT 4600
@@ -57,24 +58,27 @@ float32_t autocorrelation_result[DATA_VALUES_COUNT];
 float32_t mean, std_dev;
 
 arm_status status;
-
-// Добавленные переменные
-uint32_t start_index = 100;          // Начальный индекс для среза массива
-float wave_speed = 3200.0;           // Скорость волны в м/с
 float frequency = 12.5e-9;           // Частота в секундах (12.5 нс)
+
 float one_point_mm;                  // Разрешение одного отсчета в мм
 uint32_t max_index;                  // Индекс максимального значения АКФ
 
-// Добавляем новые переменные
-#define THRESHOLD 2080.0f
-#define CYCLES_NUMBER 10
-#define FLASH_DATA_ADDRESS 0x08080000  // Адрес во FLASH памяти для сохранения данных
+// Указатели на переменные параметров (будут созданы только после парсинга)
+uint32_t* start_index = NULL;
+float* wave_speed = NULL;
+uint32_t* first_left_strobe = NULL;
+uint32_t* first_right_strobe = NULL;
+uint32_t* second_left_strobe = NULL;
+uint32_t* second_right_strobe = NULL;
+float* threshold = NULL;
+float* threshold_zero_crossing = NULL;
+uint32_t* probe_length = NULL;
+uint32_t* method = NULL; // Новый параметр для метода расчета
 
-float32_t flash_stored_data[DATA_VALUES_COUNT];
-float32_t working_data[DATA_VALUES_COUNT];  // Рабочий массив для модификаций
-uint8_t cycles_completed = 0;
-bool data_stored_in_flash = false;
+// Флаг, указывающий что параметры были установлены
+bool parameters_initialized = false;
 
+bool calculate_thickness_requested = false;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -88,11 +92,70 @@ static void MX_FSMC_Init(void);
 void SendUSBDebugMessage(const char *message);
 void GenerateStartPulse(void);
 void ProcessUSBCommand(uint8_t cmd);
+void CalculateZeroCrossingThickness(const float32_t* data);
+void CalculateStrobeThickness(const float32_t* data);
+void ParseParameters(const char* params_str);
+void SendParametersResponse(void);
+void InitializeParameters(void);
+void FreeParameters(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+/**
+  * @brief Инициализация переменных параметров
+  */
+void InitializeParameters(void) {
+    if (!parameters_initialized) {
+        // Выделяем память для всех переменных параметров
+        start_index = (uint32_t*)malloc(sizeof(uint32_t));
+        wave_speed = (float*)malloc(sizeof(float));
+        first_left_strobe = (uint32_t*)malloc(sizeof(uint32_t));
+        first_right_strobe = (uint32_t*)malloc(sizeof(uint32_t));
+        second_left_strobe = (uint32_t*)malloc(sizeof(uint32_t));
+        second_right_strobe = (uint32_t*)malloc(sizeof(uint32_t));
+        threshold = (float*)malloc(sizeof(float));
+        threshold_zero_crossing = (float*)malloc(sizeof(float));
+        probe_length = (uint32_t*)malloc(sizeof(uint32_t));
+        method = (uint32_t*)malloc(sizeof(uint32_t)); // Выделяем память для метода
+
+        parameters_initialized = true;
+        SendUSBDebugMessage("Parameters memory allocated");
+    }
+}
+
+/**
+  * @brief Освобождение памяти переменных параметров
+  */
+void FreeParameters(void) {
+    if (parameters_initialized) {
+        free(start_index);
+        free(wave_speed);
+        free(first_left_strobe);
+        free(first_right_strobe);
+        free(second_left_strobe);
+        free(second_right_strobe);
+        free(threshold);
+        free(threshold_zero_crossing);
+        free(probe_length);
+        free(method); // Освобождаем память метода
+
+        start_index = NULL;
+        wave_speed = NULL;
+        first_left_strobe = NULL;
+        first_right_strobe = NULL;
+        second_left_strobe = NULL;
+        second_right_strobe = NULL;
+        threshold = NULL;
+        threshold_zero_crossing = NULL;
+        probe_length = NULL;
+        method = NULL;
+
+        parameters_initialized = false;
+        SendUSBDebugMessage("Parameters memory freed");
+    }
+}
 
 /**
   * @brief Отправка отладочного сообщения через USB
@@ -105,6 +168,79 @@ void SendUSBDebugMessage(const char *message) {
 }
 
 /**
+  * @brief Парсинг параметров из строки
+  * @param params_str Строка с параметрами (после "SETPARAMS=")
+  */
+void ParseParameters(const char* params_str) {
+    char buffer[USB_RX_BUFFER_SIZE];
+    strncpy(buffer, params_str, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+
+    // Инициализируем параметры перед парсингом
+    InitializeParameters();
+
+    char* token = strtok(buffer, "|");
+
+    while (token != NULL) {
+        char* equals_sign = strchr(token, '=');
+        if (equals_sign != NULL) {
+            *equals_sign = '\0'; // Разделяем на имя и значение
+            char* param_name = token;
+            char* param_value = equals_sign + 1;
+
+            // Парсим параметры
+            if (strcmp(param_name, "wave_speed") == 0) {
+                *wave_speed = atof(param_value);
+            } else if (strcmp(param_name, "threshold") == 0) {
+                *threshold = atof(param_value);
+            } else if (strcmp(param_name, "threshold_zero_crossing") == 0) {
+                *threshold_zero_crossing = atof(param_value);
+            } else if (strcmp(param_name, "start_index") == 0) {
+                *start_index = atoi(param_value);
+            } else if (strcmp(param_name, "probe_length") == 0) {
+                *probe_length = atoi(param_value);
+            } else if (strcmp(param_name, "strobe_left1") == 0) {
+                *first_left_strobe = atoi(param_value);
+            } else if (strcmp(param_name, "strobe_right1") == 0) {
+                *first_right_strobe = atoi(param_value);
+            } else if (strcmp(param_name, "strobe_left2") == 0) {
+                *second_left_strobe = atoi(param_value);
+            } else if (strcmp(param_name, "strobe_right2") == 0) {
+                *second_right_strobe = atoi(param_value);
+            } else if (strcmp(param_name, "method") == 0) {
+                *method = atoi(param_value); // Парсим метод
+            }
+        }
+        token = strtok(NULL, "|");
+    }
+
+    // Устанавливаем флаг для запуска расчета
+    calculate_thickness_requested = true;
+    SendUSBDebugMessage("Parameters parsed successfully - calculation requested");
+}
+
+/**
+  * @brief Отправка текущих параметров обратно в приложение
+  */
+void SendParametersResponse(void) {
+    if (!parameters_initialized) {
+        SendUSBDebugMessage("Parameters not initialized yet");
+        return;
+    }
+
+    snprintf(usb_msg, sizeof(usb_msg),
+        "wave_speed=%.1f|threshold=%.1f|threshold_zero_crossing=%.1f|"
+        "start_index=%lu|probe_length=%lu|strobe_left1=%lu|strobe_right1=%lu|"
+        "strobe_left2=%lu|strobe_right2=%lu|method=%lu\r\n",
+        *wave_speed, *threshold, *threshold_zero_crossing,
+        *start_index, *probe_length, *first_left_strobe, *first_right_strobe,
+        *second_left_strobe, *second_right_strobe, *method);
+
+    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    HAL_Delay(10);
+}
+
+/**
   * @brief Генерация стартового импульса для ПЛИС
   * @note Импульс длительностью 200 нс на пине PD6
   */
@@ -113,7 +249,6 @@ void GenerateStartPulse(void) {
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_SET);
 
     // Задержка для формирования импульса 200 нс
-    // При тактовой частоте 168 МГц (5.95 нс на цикл) нужно ~34 цикла
     for(volatile int i = 0; i < 34; i++);
 
     // Устанавливаем низкий уровень на PD6
@@ -139,14 +274,10 @@ void ProcessUSBCommand(uint8_t cmd) {
     }
 }
 
-void NormalizeData(void)
-{
-    // Используем normalized_data как входной массив вместо measurement_data
+void NormalizeData(void) {
     arm_mean_f32(normalized_data, DATA_VALUES_COUNT, &mean);
-
     float32_t subtracted_mean[DATA_VALUES_COUNT];
     arm_offset_f32(normalized_data, -mean, subtracted_mean, DATA_VALUES_COUNT);
-
     arm_std_f32(subtracted_mean, DATA_VALUES_COUNT, &std_dev);
 
     if (std_dev != 0.0f) {
@@ -156,36 +287,29 @@ void NormalizeData(void)
     }
 }
 
-void CalculateAutocorrelation(void)
-{
+void CalculateAutocorrelation(void) {
     for (uint32_t lag = 0; lag < DATA_VALUES_COUNT; lag++) {
-        double sum = 0.0; // Накопление в double для точности
+        double sum = 0.0;
         uint32_t count = DATA_VALUES_COUNT - lag;
 
         for (uint32_t i = 0; i < count; i++) {
-            // Накопление суммы в double для большей точности
             sum += (double)normalized_data[i] * (double)normalized_data[i + lag];
         }
 
-        // Вычисление среднего значения и взятие модуля
-        double result = sum / count;
-
-        // Сохранение результата по модулю в float32_t
-        autocorrelation_result[lag] = (float32_t)fabs(result);
+        autocorrelation_result[lag] = (float32_t)fabs(sum / count);
     }
 }
 
-/**
-  * @brief Поиск индекса максимального значения автокорреляционной функции
-  * @retval Индекс максимального значения в диапазоне [start_index:N-start_index]
-  */
-uint32_t FindMaxAutocorrelationIndex(void)
-{
-    float32_t max_value = 0.0f;
-    uint32_t max_idx = start_index;
+uint32_t FindMaxAutocorrelationIndex(void) {
+    if (!parameters_initialized || start_index == NULL) {
+        SendUSBDebugMessage("Parameters not initialized for ACF");
+        return 0;
+    }
 
-    // Поиск максимума в диапазоне [start_index:DATA_VALUES_COUNT-start_index]
-    for (uint32_t i = start_index; i < DATA_VALUES_COUNT - start_index; i++) {
+    float32_t max_value = 0.0f;
+    uint32_t max_idx = *start_index;
+
+    for (uint32_t i = *start_index; i < DATA_VALUES_COUNT - *start_index; i++) {
         if (autocorrelation_result[i] > max_value) {
             max_value = autocorrelation_result[i];
             max_idx = i;
@@ -196,60 +320,150 @@ uint32_t FindMaxAutocorrelationIndex(void)
 }
 
 /**
-  * @brief Расчет толщины и отправка результата по USB
+  * @brief Расчет толщины методом перехода через ноль
   */
-void CalculateAndSendThickness(void)
-{
-    // Расчет разрешения одного отсчета в мм
-    one_point_mm = 1.0f / (wave_speed * 1000.0f * frequency);
+void CalculateZeroCrossingThickness(const float32_t* data) {
+    if (!parameters_initialized || threshold_zero_crossing == NULL || probe_length == NULL || wave_speed == NULL) {
+        SendUSBDebugMessage("Parameters not initialized for zero crossing");
+        return;
+    }
 
-    // Поиск индекса максимального значения АКФ
-    max_index = FindMaxAutocorrelationIndex();
+    // ВАЖНО: вычисляем one_point_mm здесь для методов 1 и 2
+    one_point_mm = 1.0f / (*wave_speed * 1000.0f * frequency);
 
-    // Расчет толщины
-    float thickness = max_index / (2.0f * one_point_mm);
+    uint32_t first_above_threshold_index = 0;
+    uint32_t zero_crossing_index = 0;
+    bool found_threshold = false;
 
-    // Отправка результата по USB
-    snprintf(usb_msg, sizeof(usb_msg), "Thickness: %.3f\r\n", thickness);
+    for (uint32_t i = 0; i < DATA_VALUES_COUNT; i++) {
+        if (data[i] >= *threshold_zero_crossing) {
+            first_above_threshold_index = i;
+            found_threshold = true;
+            break;
+        }
+    }
+
+    if (!found_threshold) {
+        SendUSBDebugMessage("Zero crossing: threshold not found");
+        return;
+    }
+
+    bool sign_positive = (data[first_above_threshold_index] >= 0);
+    for (uint32_t i = first_above_threshold_index + 1; i < DATA_VALUES_COUNT; i++) {
+        bool current_sign_positive = (data[i] >= 0);
+        if (current_sign_positive != sign_positive) {
+            zero_crossing_index = i;
+            break;
+        }
+    }
+
+    if (zero_crossing_index == 0) {
+        SendUSBDebugMessage("Zero crossing: zero crossing not found");
+        return;
+    }
+
+    uint32_t final_index = zero_crossing_index + *probe_length;
+    float thickness = final_index / (2.0f * one_point_mm);
+
+    snprintf(usb_msg, sizeof(usb_msg), "Zero_crossing:%.3f\r\n", thickness);
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
     HAL_Delay(10);
 }
 
-void PrintMeasurementDataToUSB(void)
-{
-    // Формируем заголовок
+/**
+  * @brief Расчет толщины методом по стробам
+  */
+void CalculateStrobeThickness(const float32_t* data) {
+    if (!parameters_initialized || first_left_strobe == NULL || first_right_strobe == NULL ||
+        second_left_strobe == NULL || second_right_strobe == NULL || wave_speed == NULL) {
+        SendUSBDebugMessage("Parameters not initialized for strobe method");
+        return;
+    }
+
+    // ВАЖНО: вычисляем one_point_mm здесь для методов 1 и 2
+    one_point_mm = 1.0f / (*wave_speed * 1000.0f * frequency);
+
+    float32_t max_value_first = -FLT_MAX;
+    uint32_t max_index_first = *first_left_strobe;
+    float32_t max_value_second = -FLT_MAX;
+    uint32_t max_index_second = *second_left_strobe;
+
+    for (uint32_t i = *first_left_strobe; i <= *first_right_strobe; i++) {
+        if (i < DATA_VALUES_COUNT && data[i] > max_value_first) {
+            max_value_first = data[i];
+            max_index_first = i;
+        }
+    }
+
+    for (uint32_t i = *second_left_strobe; i <= *second_right_strobe; i++) {
+        if (i < DATA_VALUES_COUNT && data[i] > max_value_second) {
+            max_value_second = data[i];
+            max_index_second = i;
+        }
+    }
+
+    if (max_value_first == -FLT_MAX || max_value_second == -FLT_MAX) {
+        SendUSBDebugMessage("Strobe method: max values not found");
+        return;
+    }
+
+    uint32_t index_difference = max_index_second - max_index_first;
+    float thickness = index_difference / (2.0f * one_point_mm);
+
+    snprintf(usb_msg, sizeof(usb_msg), "Strobe:%.3f\r\n", thickness);
+    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    HAL_Delay(10);
+}
+
+/**
+  * @brief Расчет толщины автокорреляционным методом и отправка результата по USB
+  */
+void CalculateAndSendACFThickness(void) {
+    if (!parameters_initialized || wave_speed == NULL) {
+        SendUSBDebugMessage("Parameters not initialized for ACF thickness calculation");
+        return;
+    }
+
+    one_point_mm = 1.0f / (*wave_speed * 1000.0f * frequency);
+    max_index = FindMaxAutocorrelationIndex();
+    float thickness = max_index / (2.0f * one_point_mm);
+
+    snprintf(usb_msg, sizeof(usb_msg), "ACF:%.3f\r\n", thickness);
+    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    HAL_Delay(10);
+}
+
+void PrintMeasurementDataToUSB(void) {
     snprintf(usb_msg, sizeof(usb_msg), "Autocorrelation Result [0-%d]:\r\n", DATA_VALUES_COUNT-1);
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
     HAL_Delay(10);
 
-    // Формируем строки с данными
     char data_line[128] = "";
-
     for (int i = 0; i < DATA_VALUES_COUNT; i++) {
         char val_str[16];
-
-        // Форматируем float значение с двумя знаками после запятой
         snprintf(val_str, sizeof(val_str), "%7.2f ", autocorrelation_result[i]);
         strncat(data_line, val_str, sizeof(data_line) - strlen(data_line) - 1);
 
-        // Если строка заполнена или это последнее значение
         if ((i+1) % VALUES_PER_LINE == 0 || i == DATA_VALUES_COUNT-1) {
             strncat(data_line, "\r\n", sizeof(data_line) - strlen(data_line) - 1);
             CDC_Transmit_FS((uint8_t*)data_line, strlen(data_line));
             HAL_Delay(10);
-            data_line[0] = '\0'; // Очищаем строку
+            data_line[0] = '\0';
         }
     }
 }
 
 /**
   * @brief Проверка данных на превышение threshold
-  * @param data Массив данных для проверки
-  * @retval true если все значения в пределах threshold, false если есть превышения
   */
 bool CheckThreshold(const float32_t* data) {
+    if (!parameters_initialized || threshold == NULL) {
+        SendUSBDebugMessage("Threshold parameter not initialized");
+        return true; // Не пропускаем обработку если параметры не инициализированы
+    }
+
     for (uint32_t i = 0; i < DATA_VALUES_COUNT; i++) {
-        if (fabsf(data[i]) > THRESHOLD) {
+        if (fabsf(data[i]) > *threshold) {
             return false;
         }
     }
@@ -257,85 +471,38 @@ bool CheckThreshold(const float32_t* data) {
 }
 
 /**
-  * @brief Сохранение данных во FLASH память
-  * @param data Массив данных для сохранения
+  * @brief Обработка данных в зависимости от выбранного метода
   */
-void SaveToFlash(const float32_t* data) {
-    // Разблокируем FLASH память
-    HAL_FLASH_Unlock();
-
-    // Очищаем страницу FLASH
-    FLASH_EraseInitTypeDef EraseInitStruct;
-    uint32_t PageError = 0;
-
-    EraseInitStruct.TypeErase = FLASH_TYPEERASE_SECTORS;
-    EraseInitStruct.Sector = FLASH_SECTOR_11;  // Выберите подходящий сектор
-    EraseInitStruct.NbSectors = 1;
-    EraseInitStruct.VoltageRange = FLASH_VOLTAGE_RANGE_3;
-
-    HAL_FLASHEx_Erase(&EraseInitStruct, &PageError);
-
-    // Записываем данные во FLASH
-    uint32_t* flash_ptr = (uint32_t*)FLASH_DATA_ADDRESS;
-    uint32_t* data_ptr = (uint32_t*)data;
-
-    for (uint32_t i = 0; i < DATA_VALUES_COUNT; i++) {
-        HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, (uint32_t)flash_ptr, *data_ptr);
-        flash_ptr++;
-        data_ptr++;
+void ProcessDataByMethod(void) {
+    if (!parameters_initialized || method == NULL) {
+        SendUSBDebugMessage("Method parameter not initialized");
+        return;
     }
 
-    // Блокируем FLASH память
-    HAL_FLASH_Lock();
+    switch (*method) {
+        case 0: // Автокорреляционный метод
+            // Копируем и нормализуем данные для АКФ
+            arm_copy_f32(measurement_data, normalized_data, DATA_VALUES_COUNT);
+            NormalizeData();
+            CalculateAutocorrelation();
+            CalculateAndSendACFThickness();
+            PrintMeasurementDataToUSB();
+            break;
 
-    data_stored_in_flash = true;
-}
+        case 1: // Только метод перехода через ноль
+            CalculateZeroCrossingThickness(measurement_data);
+            break;
 
-/**
-  * @brief Чтение данных из FLASH памяти
-  * @param data Буфер для сохранения прочитанных данных
-  */
-void ReadFromFlash(float32_t* data) {
-    uint32_t* flash_ptr = (uint32_t*)FLASH_DATA_ADDRESS;
-    uint32_t* data_ptr = (uint32_t*)data;
+        case 2: // Только метод по стробам
+            CalculateStrobeThickness(measurement_data);
+            break;
 
-    for (uint32_t i = 0; i < DATA_VALUES_COUNT; i++) {
-        *data_ptr = *flash_ptr;
-        flash_ptr++;
-        data_ptr++;
+        default:
+            SendUSBDebugMessage("Unknown method specified");
+            break;
     }
 }
 
-/**
-  * @brief Усреднение текущих данных с данными из FLASH
-  * @param current_data Текущий массив данных
-  */
-void AverageWithFlashData(float32_t* current_data) {
-    float32_t flash_data[DATA_VALUES_COUNT];
-    ReadFromFlash(flash_data);
-
-    for (uint32_t i = 0; i < DATA_VALUES_COUNT; i++) {
-        flash_data[i] = (flash_data[i] + current_data[i]) / 2.0f;
-    }
-
-    SaveToFlash(flash_data);
-}
-
-/**
-  * @brief Копирование исходных данных в рабочий массив и добавление шума
-  * @param dest Массив назначения
-  * @param src Исходный массив
-  */
-void CopyAndAddNoise(float32_t* dest, const float32_t* src) {
-    // Копируем исходные данные
-    arm_copy_f32((float32_t*)src, dest, DATA_VALUES_COUNT);
-
-    // Добавляем случайный шум ±50% от значения
-    for (uint32_t i = 0; i < DATA_VALUES_COUNT; i++) {
-        float noise = (rand() % 10000 - 5000) / 10000.0f;  // ±50%
-        dest[i] = dest[i] * (1.0f + noise);
-    }
-}
 /* USER CODE END 0 */
 
 /**
@@ -344,8 +511,8 @@ void CopyAndAddNoise(float32_t* dest, const float32_t* src) {
   */
 int main(void)
 {
-  /* USER CODE BEGIN 1 */
 
+  /* USER CODE BEGIN 1 */
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -373,69 +540,49 @@ int main(void)
   MX_FSMC_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start(&htim3);
-
-  // Инициализация добавленных переменных
-  one_point_mm = 1.0f / (wave_speed * 1000.0f * frequency);
-
-  // Инициализация генератора случайных чисел
+  // one_point_mm будет вычисляться позже, когда wave_speed будет установлен
   srand(HAL_GetTick());
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1) {
-      // Проверяем наличие команды от USB
-      if (new_data_received) {
-          cycles_completed = 0;
-          data_stored_in_flash = false;
+      if (new_data_received) { SendUSBDebugMessage("Unknown method specified");
+          // Проверяем, является ли сообщение командой SETPARAMS
+          if (strncmp((char*)usb_rx_buffer, "SETPARAMS=", 10) == 0) {
+              // Парсим параметры
+              ParseParameters((char*)usb_rx_buffer + 10);
 
-          // Основной цикл обработки 10 циклов
-          while (cycles_completed < CYCLES_NUMBER) {
-              // Копируем исходные данные и добавляем шум
-              CopyAndAddNoise(working_data, measurement_data);
-
-              // ПРОВЕРКА НА ПОРОГ: если хотя бы одна точка превысила - переходим к следующему циклу
-              if (!CheckThreshold(working_data)) {
-                  SendUSBDebugMessage("Not written to FLASH: array exceeded threshold");
-                  cycles_completed++;
-                  continue; // Немедленно переходим к следующему циклу
-              }
-
-              // Если все точки прошли проверку - запись/усреднение во FLASH
-              if (!data_stored_in_flash) {
-                  // Первое сохранение во FLASH
-                  SaveToFlash(working_data);
-                  SendUSBDebugMessage("First written to FLASH");
-                  data_stored_in_flash = true;
-              } else {
-                  // Усреднение с данными из FLASH
-                  AverageWithFlashData(working_data);
-                  SendUSBDebugMessage("Successfully written to FLASH with averaging");
-              }
-
-              cycles_completed++;
+              // Отправляем подтверждение с текущими значениями
+              SendParametersResponse();
           }
+          // Сбрасываем буфер и флаг
+          memset((void*)usb_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+          usb_rx_index = 0;
+          new_data_received = 0;
+      }
 
-          // После завершения всех 10 циклов - обработка финальных данных
-          if (data_stored_in_flash) {
-              ReadFromFlash(normalized_data);
-              NormalizeData();
-              CalculateAutocorrelation();
-              CalculateAndSendThickness();
-              PrintMeasurementDataToUSB();
+      // Проверяем, нужно ли выполнить расчет толщин
+      if (calculate_thickness_requested && parameters_initialized) {
+          calculate_thickness_requested = false; // Сбрасываем флаг
+
+          if (!CheckThreshold(measurement_data)) {
+              SendUSBDebugMessage("Data exceeds threshold, skipping processing");
+          } else {
+              // Обрабатываем данные в зависимости от выбранного метода
+              ProcessDataByMethod();
+              SendUSBDebugMessage("Thickness calculation completed");
           }
-
-          new_data_received = 0; // Сбрасываем флаг
       }
 
       HAL_Delay(100);
   }
-  /* USER CODE END WHILE */
+    /* USER CODE END WHILE */
 
-  /* USER CODE BEGIN 3 */
-/* USER CODE END 3 */
+    /* USER CODE BEGIN 3 */
+  /* USER CODE END 3 */
 }
+
 /**
   * @brief System Clock Configuration
   * @retval None

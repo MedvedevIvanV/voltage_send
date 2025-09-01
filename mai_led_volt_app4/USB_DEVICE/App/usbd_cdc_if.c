@@ -30,11 +30,11 @@
 /* Private macro -------------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+#define USB_RX_BUFFER_SIZE 256
 /* Private variables ---------------------------------------------------------*/
-volatile uint8_t usb_rx_buffer[64] = {0}; // Буфер для приема данных
-volatile uint8_t usb_rx_flag = 0;         // Флаг получения данных
-
-volatile uint8_t new_data_received = 0;  // Новый флаг
+volatile uint8_t usb_rx_buffer[USB_RX_BUFFER_SIZE] = {0};
+volatile uint16_t usb_rx_index = 0;
+volatile uint8_t new_data_received = 0;
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -113,7 +113,6 @@ extern USBD_HandleTypeDef hUsbDeviceFS;
 
 /* USER CODE BEGIN EXPORTED_VARIABLES */
 // Добавляем для доступа из main.c
-extern volatile uint8_t usb_rx_buffer[64];
 extern volatile uint8_t usb_rx_flag;
 extern volatile uint8_t new_data_received;
 /* USER CODE END EXPORTED_VARIABLES */
@@ -266,15 +265,20 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
   */
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
-  /* USER CODE BEGIN 6 */
-	  // Копируем полученные данные в буфер
-	  memcpy((void*)usb_rx_buffer, Buf, (*Len > 64) ? 64 : *Len);
-	  new_data_received = 1; // Устанавливаем флаг получения данных
+    uint32_t bytes_to_copy = (*Len > (USB_RX_BUFFER_SIZE - usb_rx_index)) ?
+                            (USB_RX_BUFFER_SIZE - usb_rx_index) : *Len;
 
-	  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
-	  USBD_CDC_ReceivePacket(&hUsbDeviceFS);
-	  return (USBD_OK);
-  /* USER CODE END 6 */
+    memcpy((void*)&usb_rx_buffer[usb_rx_index], Buf, bytes_to_copy);
+    usb_rx_index += bytes_to_copy;
+
+    // Проверяем наличие завершающего символа
+    if (usb_rx_index > 0 && usb_rx_buffer[usb_rx_index - 1] == '\n') {
+        new_data_received = 1;
+    }
+
+    USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
+    USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+    return (USBD_OK);
 }
 
 /**
