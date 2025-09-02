@@ -24,7 +24,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define START_PULSE_DURATION_NS 200   // Длительность стартового импульса в наносекундах
-#define USB_RX_BUFFER_SIZE 256
+#define USB_RX_BUFFER_SIZE 300
 #define FINAL_DATA_SIZE 10000
 #define PARAMS_FLASH_ADDRESS 0x08080000  // Адрес во Flash памяти для хранения параметров
 /* USER CODE END PD */
@@ -79,12 +79,18 @@ typedef struct {
     uint32_t method;
     uint32_t end_index;
     uint32_t cycle_number;
+    char sensor_number[5];           // 4 символа + нулевой терминатор
+    float gain;
     uint32_t crc; // Контрольная сумма для проверки целостности данных
 } Parameters_t;
 
 Parameters_t params; // Глобальная структура параметров
 bool parameters_initialized = false;
 bool calculate_thickness_requested = false;
+
+// Переменные для временного хранения start_date и period (НЕ сохраняются во Flash)
+char start_date[20] = {0}; // Формат: "2024-01-15 14:30:25"
+uint32_t period = 0;
 
 // Буферы для обработки данных
 float32_t temp_data[FINAL_DATA_SIZE]; // Временный буфер для обработки
@@ -203,6 +209,8 @@ void InitializeParameters(void) {
     params.method = 1;
     params.end_index = 400;
     params.cycle_number = 10;
+    strncpy(params.sensor_number, "0001", sizeof(params.sensor_number));
+    params.gain = 1.0f;
 
     parameters_initialized = true;
     SaveParametersToFlash(); // Сохраняем значения по умолчанию
@@ -267,12 +275,27 @@ void ParseParameters(const char* params_str) {
                 params.end_index = atoi(param_value);
             } else if (strcmp(param_name, "cycle_number") == 0) {
                 params.cycle_number = atoi(param_value);
+            } else if (strcmp(param_name, "sensor_number") == 0) {
+                strncpy(params.sensor_number, param_value, sizeof(params.sensor_number) - 1);
+                params.sensor_number[sizeof(params.sensor_number) - 1] = '\0';
+            } else if (strcmp(param_name, "gain") == 0) {
+                params.gain = atof(param_value);
+            } else if (strcmp(param_name, "start_date") == 0) {
+                // Сохраняем start_date во временную переменную (НЕ во Flash)
+                strncpy(start_date, param_value, sizeof(start_date) - 1);
+                start_date[sizeof(start_date) - 1] = '\0';
+                SendUSBDebugMessage("Start date parsed (not saved to Flash)");
+            } else if (strcmp(param_name, "period") == 0) {
+                // Сохраняем period во временную переменную (НЕ во Flash)
+                period = atoi(param_value);
+                snprintf(usb_msg, sizeof(usb_msg), "Period parsed: %lu (not saved to Flash)", period);
+                SendUSBDebugMessage(usb_msg);
             }
         }
         token = strtok(NULL, "|");
     }
 
-    // Сохраняем обновленные параметры в Flash
+    // Сохраняем обновленные параметры в Flash (без start_date и period)
     SaveParametersToFlash();
 
     // Устанавливаем флаг для запуска расчета
@@ -292,10 +315,12 @@ void SendParametersResponse(void) {
     snprintf(usb_msg, sizeof(usb_msg),
         "wave_speed=%.1f|threshold=%.1f|threshold_zero_crossing=%.1f|"
         "start_index=%lu|probe_length=%lu|strobe_left1=%lu|strobe_right1=%lu|"
-        "strobe_left2=%lu|strobe_right2=%lu|method=%lu|end_index=%lu|cycle_number=%lu\r\n",
+        "strobe_left2=%lu|strobe_right2=%lu|method=%lu|end_index=%lu|cycle_number=%lu|"
+        "sensor_number=%s|gain=%.1f|start_date=%s|period=%lu\r\n",
         params.wave_speed, params.threshold, params.threshold_zero_crossing,
         params.start_index, params.probe_length, params.first_left_strobe, params.first_right_strobe,
-        params.second_left_strobe, params.second_right_strobe, params.method, params.end_index, params.cycle_number);
+        params.second_left_strobe, params.second_right_strobe, params.method, params.end_index, params.cycle_number,
+        params.sensor_number, params.gain, start_date, period);
 
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
     HAL_Delay(10);
@@ -550,7 +575,7 @@ void AddRandomNoiseAndExtend(const float32_t* src, float32_t* dest, uint32_t des
         dest[i] = src[i] + noise;
     }
 
-    // Дополняем массив до 10000 точек случайными колебаниями
+    // Дополняем массив до 10000 точек случайными колебаниям
     for (uint32_t i = DATA_VALUES_COUNT; i < dest_size; i++) {
         dest[i] = (rand() % 2000 - 1000) / 10.0f; // Случайные значения в диапазоне ±100
     }
@@ -564,6 +589,11 @@ void AddRandomNoiseAndExtend(const float32_t* src, float32_t* dest, uint32_t des
 bool ProcessCycle(uint32_t cycle_num) {
     // Добавляем шум и расширяем данные
     AddRandomNoiseAndExtend(measurement_data, temp_data, FINAL_DATA_SIZE);
+
+    // Применяем коэффициент усиления
+    if (params.gain != 1.0f) {
+        arm_scale_f32(temp_data, params.gain, temp_data, FINAL_DATA_SIZE);
+    }
 
     // Проверяем порог - функция возвращает true если НЕ превысило порог
     bool below_threshold = CheckThreshold(temp_data, FINAL_DATA_SIZE);
@@ -600,6 +630,11 @@ void ProcessDataByMethod(void) {
         SendUSBDebugMessage("Parameters not initialized");
         return;
     }
+
+    // Добавляем информацию о сенсоре в отладочное сообщение
+    snprintf(usb_msg, sizeof(usb_msg), "Processing data for sensor: %s, gain: %.1f", params.sensor_number, params.gain);
+    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    HAL_Delay(10);
 
     // Сбрасываем счетчик успешных циклов
     successful_cycles = 0;
