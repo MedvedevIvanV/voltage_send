@@ -27,6 +27,8 @@
 #define USB_RX_BUFFER_SIZE 300
 #define FINAL_DATA_SIZE 10000
 #define PARAMS_FLASH_ADDRESS 0x08080000  // Адрес во Flash памяти для хранения параметров
+
+#define UART_RX_TIMEOUT_MS 100
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -43,7 +45,7 @@ UART_HandleTypeDef huart1;
 SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
-char usb_msg[256];                   // Буфер для USB сообщений
+char usb_msg[512];                   // Буфер для USB сообщений
 
 // Добавляем объявления переменных из usbd_cdc_if.c
 extern volatile uint8_t usb_rx_buffer[USB_RX_BUFFER_SIZE];
@@ -96,6 +98,27 @@ uint32_t period = 0;
 float32_t temp_data[FINAL_DATA_SIZE]; // Временный буфер для обработки
 float32_t final_data[FINAL_DATA_SIZE]; // Финальный буфер для усредненных данных
 uint32_t successful_cycles = 0; // Счетчик успешных циклов
+
+// Добавляем переменные для UART передачи
+#define UART_TX_BUF_SIZE 128
+char uart_tx_buf[UART_TX_BUF_SIZE];
+
+
+
+#define UART_RX_BUF_SIZE 128
+char uart_rx_buf[UART_RX_BUF_SIZE];
+uint8_t uart_rx_pos = 0;
+volatile uint8_t uart_cmd_ready = 0;
+uint32_t uart_last_rx_time = 0;
+
+
+volatile uint8_t uart_rx_data[UART_RX_BUF_SIZE];
+volatile uint8_t uart_rx_len = 0;
+volatile uint8_t uart_message_received = 0;
+
+
+float thermocouple_temperature = 0.0f;
+bool thermocouple_error = false;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -126,6 +149,12 @@ void CalculateAndSendACFThickness(void);
 void PrintMeasurementDataToUSB(void);
 bool CheckThreshold(const float32_t* data, uint32_t size);
 void ProcessDataByMethod(void);
+void SendDateTimeToBackupMCU(void);
+// НОВЫЙ КОД ДЛЯ ПРИЕМА ОТ ДЕЖУРНОГО МК - ДОБАВЛЯЕМ СЮДА
+void ProcessUARTCommand(uint8_t* data, uint8_t len);
+
+uint16_t Read_Thermocouple_Temperature(void);
+float Get_Thermocouple_Temperature(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -297,6 +326,9 @@ void ParseParameters(const char* params_str) {
 
     // Сохраняем обновленные параметры в Flash (без start_date и period)
     SaveParametersToFlash();
+
+    // ОТПРАВЛЯЕМ ДАННЫЕ НА ДЕЖУРНЫЙ МК ПО UART
+    SendDateTimeToBackupMCU();
 
     // Устанавливаем флаг для запуска расчета
     calculate_thickness_requested = true;
@@ -677,6 +709,243 @@ void ProcessDataByMethod(void) {
     }
 }
 
+
+
+
+/**
+  * @brief Отправка даты/времени и периода на дежурный МК по UART
+  */
+void SendDateTimeToBackupMCU(void) {
+    // Проверяем что данные не пустые
+    if (strlen(start_date) > 0 && period > 0) {
+        // Формируем сообщение в формате: "DATE:YYYY-MM-DD;TIME:HH:MM:SS;PERIOD:XXXXX"
+        snprintf(uart_tx_buf, UART_TX_BUF_SIZE,
+                 "DATE:%.10s;TIME:%.8s;PERIOD:%lu\r\n",
+                 start_date, start_date + 11, period);
+
+        // Отправляем по UART
+        HAL_UART_Transmit(&huart1, (uint8_t*)uart_tx_buf, strlen(uart_tx_buf), 100);
+
+        // Отладочное сообщение по USB
+        snprintf(usb_msg, sizeof(usb_msg), "Sent to backup MCU: %s", uart_tx_buf);
+        SendUSBDebugMessage(usb_msg);
+    } else {
+        SendUSBDebugMessage("No date/time data to send to backup MCU");
+    }
+}
+
+
+
+
+
+/**
+  * @brief Обработка команды от дежурного МК через UART
+  * @param data Данные для обработки
+  * @param len Длина данных
+  */
+/**
+  * @brief Обработка команды от дежурного МК через UART
+  * @param data Данные для обработки
+  * @param len Длина данных
+  */
+void ProcessUARTCommand(uint8_t* data, uint8_t len) {
+    char* date_ptr = strstr((char*)data, "DATE:");
+    char* time_ptr = strstr((char*)data, ";TIME:");
+    char* period_ptr = strstr((char*)data, ";PERIOD:");
+    char* voltage_ptr = strstr((char*)data, ";VOLTAGE:");
+    char* temp_ptr = strstr((char*)data, ";TEMP:");
+
+    // Новый формат с напряжением и температурой
+    if(date_ptr && time_ptr && period_ptr && voltage_ptr && temp_ptr) {
+        int year, month, day, hour, min, sec;
+        uint32_t received_period;
+        float received_voltage, received_temp;
+
+        // Парсим дату, время, период, напряжение и температуру
+        if(sscanf(date_ptr, "DATE:%d-%d-%d", &year, &month, &day) == 3 &&
+           sscanf(time_ptr, ";TIME:%d:%d:%d", &hour, &min, &sec) == 3 &&
+           sscanf(period_ptr, ";PERIOD:%lu", &received_period) == 1 &&
+           sscanf(voltage_ptr, ";VOLTAGE:%f", &received_voltage) == 1 &&
+           sscanf(temp_ptr, ";TEMP:%f", &received_temp) == 1) {
+
+            // Формируем строку даты в формате "YYYY-MM-DD HH:MM:SS"
+            snprintf(start_date, sizeof(start_date), "%04d-%02d-%02d %02d:%02d:%02d",
+                    year, month, day, hour, min, sec);
+            period = received_period;
+
+            // ИЗМЕРЯЕМ ТЕМПЕРАТУРУ ТЕРМОПАРЫ
+            thermocouple_temperature = Get_Thermocouple_Temperature();
+
+            // Выводим полученные данные по USB с температурой термопары
+            if(thermocouple_error) {
+                snprintf(usb_msg, sizeof(usb_msg),
+                        "BACKUP_DATA: Date=%s, Period=%lu, Voltage=%.4fV, Temp=%.2f°C, Thermocouple=ERROR\r\n",
+                        start_date, period, received_voltage, received_temp);
+            } else {
+                snprintf(usb_msg, sizeof(usb_msg),
+                        "BACKUP_DATA: Date=%s, Period=%lu, Voltage=%.4fV, Temp=%.2f°C, Thermocouple=%.2f°C\r\n",
+                        start_date, period, received_voltage, received_temp, thermocouple_temperature);
+            }
+
+            CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+            HAL_Delay(10);
+
+            SendUSBDebugMessage("DateTime, period, voltage, temperature and thermocouple from FLASH backup MCU");
+        }
+    }
+    // Формат с напряжением (без температуры)
+    else if(date_ptr && time_ptr && period_ptr && voltage_ptr) {
+        int year, month, day, hour, min, sec;
+        uint32_t received_period;
+        float received_voltage;
+
+        // Парсим дату, время, период и напряжение
+        if(sscanf(date_ptr, "DATE:%d-%d-%d", &year, &month, &day) == 3 &&
+           sscanf(time_ptr, ";TIME:%d:%d:%d", &hour, &min, &sec) == 3 &&
+           sscanf(period_ptr, ";PERIOD:%lu", &received_period) == 1 &&
+           sscanf(voltage_ptr, ";VOLTAGE:%f", &received_voltage) == 1) {
+
+            // Формируем строку даты в формате "YYYY-MM-DD HH:MM:SS"
+            snprintf(start_date, sizeof(start_date), "%04d-%02d-%02d %02d:%02d:%02d",
+                    year, month, day, hour, min, sec);
+            period = received_period;
+
+            // ИЗМЕРЯЕМ ТЕМПЕРАТУРУ ТЕРМОПАРЫ
+            thermocouple_temperature = Get_Thermocouple_Temperature();
+
+            // Выводим полученные данные по USB с температурой термопары
+            if(thermocouple_error) {
+                snprintf(usb_msg, sizeof(usb_msg),
+                        "BACKUP_DATA: Date=%s, Period=%lu, Voltage=%.4fV, Thermocouple=ERROR\r\n",
+                        start_date, period, received_voltage);
+            } else {
+                snprintf(usb_msg, sizeof(usb_msg),
+                        "BACKUP_DATA: Date=%s, Period=%lu, Voltage=%.4fV, Thermocouple=%.2f°C\r\n",
+                        start_date, period, received_voltage, thermocouple_temperature);
+            }
+
+            CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+            HAL_Delay(10);
+
+            SendUSBDebugMessage("DateTime, period, voltage and thermocouple from FLASH backup MCU");
+        }
+    }
+    // Старый формат (только дата, время и период)
+    else if(date_ptr && time_ptr && period_ptr) {
+        int year, month, day, hour, min, sec;
+        uint32_t received_period;
+
+        // Парсим дату и время
+        if(sscanf(date_ptr, "DATE:%d-%d-%d", &year, &month, &day) == 3 &&
+           sscanf(time_ptr, ";TIME:%d:%d:%d", &hour, &min, &sec) == 3 &&
+           sscanf(period_ptr, ";PERIOD:%lu", &received_period) == 1) {
+
+            // Формируем строку даты в формате "YYYY-MM-DD HH:MM:SS"
+            snprintf(start_date, sizeof(start_date), "%04d-%02d-%02d %02d:%02d:%02d",
+                    year, month, day, hour, min, sec);
+            period = received_period;
+
+            // ИЗМЕРЯЕМ ТЕМПЕРАТУРУ ТЕРМОПАРЫ
+            thermocouple_temperature = Get_Thermocouple_Temperature();
+
+            // Выводим полученные данные по USB с температурой термопары
+            if(thermocouple_error) {
+                snprintf(usb_msg, sizeof(usb_msg),
+                        "BACKUP_DATA: Date=%s, Period=%lu, Thermocouple=ERROR\r\n",
+                        start_date, period);
+            } else {
+                snprintf(usb_msg, sizeof(usb_msg),
+                        "BACKUP_DATA: Date=%s, Period=%lu, Thermocouple=%.2f°C\r\n",
+                        start_date, period, thermocouple_temperature);
+            }
+
+            CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+            HAL_Delay(10);
+
+            SendUSBDebugMessage("DateTime, period and thermocouple from FLASH backup MCU (old format)");
+        }
+    }
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+    if(huart->Instance == USART1) {
+        uart_last_rx_time = HAL_GetTick();
+
+        if(uart_rx_buf[uart_rx_pos] == '\n' || uart_rx_pos >= UART_RX_BUF_SIZE-1) {
+            // Копируем данные в буфер для обработки
+            memcpy((void*)uart_rx_data, uart_rx_buf, uart_rx_pos);
+            uart_rx_len = uart_rx_pos;
+            uart_message_received = 1;
+
+            uart_rx_pos = 0;
+            memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
+        } else {
+            uart_rx_pos++;
+        }
+        HAL_UART_Receive_IT(&huart1, (uint8_t*)&uart_rx_buf[uart_rx_pos], 1);
+    }
+}
+
+
+
+uint16_t Read_Thermocouple_Temperature(void) {
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    uint16_t raw_data = 0;
+
+    // Настройка PC11 (DATA) как входа
+    GPIO_InitStruct.Pin = GPIO_PIN_11;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+    // Активация чипа (активный низкий уровень на PC8 - термопара CS)
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
+
+    // Задержка для стабилизации (минимум 100ns по даташиту)
+    for(volatile int i = 0; i < 10; i++);
+
+    // Чтение 16 бит данных
+    for(uint8_t i = 0; i < 16; i++) {
+        // Генерация тактового импульса (PC10 - DCLK)
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
+        for(volatile int j = 0; j < 5; j++); // Короткая задержка
+
+        // Чтение бита данных (MSB first)
+        if(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_11)) {
+            raw_data |= (1 << (15 - i));
+        }
+
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
+        for(volatile int j = 0; j < 5; j++); // Короткая задержка
+    }
+
+    // Деактивация чипа
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);
+
+    return raw_data;
+}
+
+/**
+  * @brief Получение температуры термопары в градусах Цельсия
+  */
+float Get_Thermocouple_Temperature(void) {
+    uint16_t raw_data = Read_Thermocouple_Temperature();
+
+    // Проверка на разомкнутую цепь (бит D2)
+    if(raw_data & 0x04) {
+        thermocouple_error = true;
+        return -999.0f; // Код ошибки
+    }
+
+    thermocouple_error = false;
+
+    // Извлечение 12-битного значения температуры (биты D14-D3)
+    raw_data >>= 3; // Убираем 3 младших бита (D2-D0)
+    raw_data &= 0x0FFF; // Оставляем только 12 бит температуры
+
+    // Конверсия в градусы (каждый LSB = 0.25°C)
+    return (float)raw_data * 0.25f;
+}
 /* USER CODE END 0 */
 
 /**
@@ -702,6 +971,9 @@ int main(void)
   HAL_TIM_Base_Start(&htim3);
   srand(HAL_GetTick());
 
+  HAL_UART_Receive_IT(&huart1, (uint8_t*)uart_rx_buf, 1);
+
+
   // Загружаем параметры из энергонезависимой памяти при старте
   HAL_Delay(1000);
   LoadParametersFromFlash();
@@ -711,35 +983,41 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1) {
-      if (new_data_received) {
-          // Проверяем, является ли сообщение командой SETPARAMS
-          if (strncmp((char*)usb_rx_buffer, "SETPARAMS=", 10) == 0) {
-              // Парсим параметры
-              ParseParameters((char*)usb_rx_buffer + 10);
+	  // Обработка USB команд
+	      if (new_data_received) {
+	          if (strncmp((char*)usb_rx_buffer, "SETPARAMS=", 10) == 0) {
+	              ParseParameters((char*)usb_rx_buffer + 10);
+	              SendParametersResponse();
+	          }
+	          else if (strncmp((char*)usb_rx_buffer, "1", 1) == 0) {
+	              ProcessUSBCommand('1');
+	          }
+	          memset((void*)usb_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+	          usb_rx_index = 0;
+	          new_data_received = 0;
+	      }
 
-              // Отправляем подтверждение с текущими значениями
-              SendParametersResponse();
-          }
-          else if (strncmp((char*)usb_rx_buffer, "1", 1) == 0) {
-              // Обработка команды "1"
-              ProcessUSBCommand('1');
-          }
-          // Сбрасываем буфер и флаг
-          memset((void*)usb_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-          usb_rx_index = 0;
-          new_data_received = 0;
-      }
+	      // Обработка UART от дежурного МК
+	      if(uart_message_received) {
+	          uart_message_received = 0;
+	          ProcessUARTCommand((uint8_t*)uart_rx_data, uart_rx_len);
+	      }
 
-      // Проверяем, нужно ли выполнить расчет толщин
-      if (calculate_thickness_requested && parameters_initialized) {
-          calculate_thickness_requested = false; // Сбрасываем флаг
+	      // Таймаут UART приема
+	      if(uart_rx_pos > 0 && (HAL_GetTick() - uart_last_rx_time) > UART_RX_TIMEOUT_MS) {
+	          uart_rx_pos = 0;
+	          memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
+	          HAL_UART_Receive_IT(&huart1, (uint8_t*)uart_rx_buf, 1);
+	      }
 
-          // Обрабатываем данные с учетом циклов
-          ProcessDataByMethod();
-          SendUSBDebugMessage("Thickness calculation completed");
-      }
+	      // Проверяем, нужно ли выполнить расчет толщин
+	      if (calculate_thickness_requested && parameters_initialized) {
+	          calculate_thickness_requested = false;
+	          ProcessDataByMethod();
+	          SendUSBDebugMessage("Thickness calculation completed");
+	      }
 
-      HAL_Delay(100);
+	      HAL_Delay(10);
   }
   /* USER CODE END WHILE */
 

@@ -45,7 +45,7 @@ typedef struct {
 #define LED_BLINK_COUNT        3
 #define LED_BLINK_DELAY_MS     200
 
-#define UART_RX_BUF_SIZE       64
+#define UART_RX_BUF_SIZE       128
 #define UART_TIMEOUT_MS        100
 
 /* Private variables ---------------------------------------------------------*/
@@ -54,8 +54,9 @@ uint8_t uart_rx_buf[UART_RX_BUF_SIZE];
 uint8_t uart_rx_pos = 0;
 volatile uint8_t uart_cmd_ready = 0;
 uint32_t uart_last_rx_time = 0;
-uint32_t seconds_counter = 0;
+uint32_t period_counter = 0;
 uint32_t last_rtc_seconds = 0;
+bool data_received_from_main = false;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
@@ -69,8 +70,11 @@ static bool is_rtc_initialized(void);
 static void initialize_rtc(void);
 static void process_uart_command(uint8_t* data, uint8_t len);
 static void send_current_datetime(void);
+static void send_datetime_with_voltage_and_temp(void);
 static void update_calendar(void);
 static uint8_t days_in_month(uint8_t month, uint8_t year);
+static float read_voltage(void);
+static float read_temperature(void);
 
 /* Private functions ---------------------------------------------------------*/
 
@@ -83,6 +87,93 @@ static uint8_t days_in_month(uint8_t month, uint8_t year) {
         return 29;
     }
     return days[month-1];
+}
+
+/**
+  * @brief Read voltage from ADC
+  */
+static float read_voltage(void)
+{
+    uint32_t adcValue = 0;
+    float voltage = 0.0f;
+    ADC_ChannelConfTypeDef sConfig = {0};
+
+    // Конфигурация канала ADC
+    sConfig.Channel = ADC_CHANNEL_0;
+    sConfig.Rank = ADC_REGULAR_RANK_1;
+    sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
+    sConfig.SingleDiff = ADC_SINGLE_ENDED;
+    sConfig.OffsetNumber = ADC_OFFSET_NONE;
+    sConfig.Offset = 0;
+
+    if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+    {
+        return 0.0f;
+    }
+
+    // Запуск преобразования ADC
+    if (HAL_ADC_Start(&hadc1) == HAL_OK)
+    {
+        // Ожидание завершения преобразования
+        if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK)
+        {
+            adcValue = HAL_ADC_GetValue(&hadc1);
+            voltage = (float)adcValue * 3.3f / 4095.0f;
+        }
+        HAL_ADC_Stop(&hadc1);
+    }
+
+    return voltage;
+}
+
+/**
+  * @brief Read temperature from internal sensor
+  */
+static float read_temperature(void)
+{
+    uint32_t adcValue = 0;
+    float temperature = 0.0f;
+    ADC_ChannelConfTypeDef sConfig = {0};
+
+    // Конфигурация канала температурного датчика
+    sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
+    sConfig.Rank = ADC_REGULAR_RANK_1;
+    sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
+    sConfig.SingleDiff = ADC_SINGLE_ENDED;
+    sConfig.OffsetNumber = ADC_OFFSET_NONE;
+    sConfig.Offset = 0;
+
+    if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+    {
+        return 0.0f;
+    }
+
+    // Калибровка ADC
+    if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
+    {
+        return 0.0f;
+    }
+
+    // Запуск преобразования ADC
+    if (HAL_ADC_Start(&hadc1) == HAL_OK)
+    {
+        // Ожидание завершения преобразования
+        if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK)
+        {
+            adcValue = HAL_ADC_GetValue(&hadc1);
+
+            // Калибровочные значения для STM32L5
+            uint32_t raw_ts_cal1 = *((uint16_t*)0x0BFA05A8); // Калибровка при 30°C
+            uint32_t raw_ts_cal2 = *((uint16_t*)0x0BFA05CA); // Калибровка при 130°C
+
+            // Расчет температуры по калибровочным значениям
+            temperature = 30.0f + ((float)adcValue - (float)raw_ts_cal1) *
+                         (100.0f / ((float)raw_ts_cal2 - (float)raw_ts_cal1));
+        }
+        HAL_ADC_Stop(&hadc1);
+    }
+
+    return temperature;
 }
 
 /**
@@ -125,7 +216,8 @@ static void convert_from_timestamp(uint32_t timestamp, RTC_DateTypeDef* date, RT
 static bool is_data_valid(FlashCalendarData* data)
 {
     return (data->magic == FLASH_DATA_MAGIC &&
-            data->data_valid == DATA_VALID_FLAG);
+            data->data_valid == DATA_VALID_FLAG &&
+            data->period_sec > 0);
 }
 
 static void save_to_flash(FlashCalendarData data)
@@ -159,6 +251,7 @@ static void save_to_flash(FlashCalendarData data)
 
     HAL_FLASH_Lock();
     calendar_data = data;
+    data_received_from_main = true;
     blink_led();
 }
 
@@ -237,10 +330,11 @@ static void process_uart_command(uint8_t* data, uint8_t len)
         RTC_DateTypeDef date;
         RTC_TimeTypeDef time;
         int year, month, day, hour, min, sec;
+        uint32_t period;
 
         if(sscanf(date_ptr, "DATE:%d-%d-%d", &year, &month, &day) != 3) return;
         if(sscanf(time_ptr, ";TIME:%d:%d:%d", &hour, &min, &sec) != 3) return;
-        if(sscanf(period_ptr, ";PERIOD:%lu", &calendar_data.period_sec) != 1) return;
+        if(sscanf(period_ptr, ";PERIOD:%lu", &period) != 1) return;
 
         date.Year = year - 2000;
         date.Month = month;
@@ -250,6 +344,7 @@ static void process_uart_command(uint8_t* data, uint8_t len)
         time.Seconds = sec;
 
         calendar_data.timestamp = convert_to_timestamp(date, time);
+        calendar_data.period_sec = period;
         calendar_data.magic = FLASH_DATA_MAGIC;
         calendar_data.data_valid = DATA_VALID_FLAG;
 
@@ -258,7 +353,11 @@ static void process_uart_command(uint8_t* data, uint8_t len)
         HAL_RTC_SetTime(&hrtc, &time, RTC_FORMAT_BIN);
         HAL_RTC_SetDate(&hrtc, &date, RTC_FORMAT_BIN);
 
-        send_current_datetime();
+        // Сразу отправляем подтверждение с текущими данными, напряжением и температурой
+        send_datetime_with_voltage_and_temp();
+
+        // Сбрасываем счетчик периода
+        period_counter = 0;
     }
 
     uart_rx_pos = 0;
@@ -270,11 +369,12 @@ static void send_current_datetime(void)
 {
     RTC_DateTypeDef date;
     RTC_TimeTypeDef time;
-    char uart_msg[64];
+    char uart_msg[128];
 
     HAL_RTC_GetTime(&hrtc, &time, RTC_FORMAT_BIN);
     HAL_RTC_GetDate(&hrtc, &date, RTC_FORMAT_BIN);
 
+    // Форматируем сообщение в том же формате, что ожидает основной МК
     snprintf(uart_msg, sizeof(uart_msg),
            "DATE:%04d-%02d-%02d;TIME:%02d:%02d:%02d;PERIOD:%lu\r\n",
            date.Year + 2000, date.Month, date.Date,
@@ -282,6 +382,37 @@ static void send_current_datetime(void)
            calendar_data.period_sec);
 
     HAL_UART_Transmit(&hlpuart1, (uint8_t*)uart_msg, strlen(uart_msg), 100);
+
+    // Мигаем LED для индикации отправки
+    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
+    HAL_Delay(50);
+    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
+}
+
+static void send_datetime_with_voltage_and_temp(void)
+{
+    RTC_DateTypeDef date;
+    RTC_TimeTypeDef time;
+    float voltage = read_voltage(); // Измеряем напряжение
+    float temperature = read_temperature(); // Измеряем температуру
+    char uart_msg[128]; // Увеличили буфер для добавления температуры
+
+    HAL_RTC_GetTime(&hrtc, &time, RTC_FORMAT_BIN);
+    HAL_RTC_GetDate(&hrtc, &date, RTC_FORMAT_BIN);
+
+    // Форматируем сообщение с добавлением напряжения и температуры
+    snprintf(uart_msg, sizeof(uart_msg),
+           "DATE:%04d-%02d-%02d;TIME:%02d:%02d:%02d;PERIOD:%lu;VOLTAGE:%.4f;TEMP:%.2f\r\n",
+           date.Year + 2000, date.Month, date.Date,
+           time.Hours, time.Minutes, time.Seconds,
+           calendar_data.period_sec, voltage, temperature);
+
+    HAL_UART_Transmit(&hlpuart1, (uint8_t*)uart_msg, strlen(uart_msg), 100);
+
+    // Мигаем LED для индикации отправки
+    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
+    HAL_Delay(50);
+    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
 }
 
 static void update_calendar(void)
@@ -292,22 +423,27 @@ static void update_calendar(void)
     if(current_time.Seconds != last_rtc_seconds) {
         last_rtc_seconds = current_time.Seconds;
 
-        if(calendar_data.period_sec > 0) {
-            seconds_counter++;
+        if(data_received_from_main && calendar_data.period_sec > 0) {
+            period_counter++;
 
-            if(seconds_counter >= calendar_data.period_sec) {
-                seconds_counter = 0;
+            if(period_counter >= calendar_data.period_sec) {
+                period_counter = 0;
 
+                // Обновляем timestamp на величину периода
                 calendar_data.timestamp += calendar_data.period_sec;
-                save_to_flash(calendar_data);
 
+                // Обновляем RTC
                 RTC_DateTypeDef date;
                 RTC_TimeTypeDef time;
                 convert_from_timestamp(calendar_data.timestamp, &date, &time);
                 HAL_RTC_SetTime(&hrtc, &time, RTC_FORMAT_BIN);
                 HAL_RTC_SetDate(&hrtc, &date, RTC_FORMAT_BIN);
 
-                send_current_datetime();
+                // Сохраняем обновленные данные во FLASH
+                save_to_flash(calendar_data);
+
+                // ОТПРАВЛЯЕМ обновленные данные основному МК с напряжением и температурой
+                send_datetime_with_voltage_and_temp();
             }
         }
     }
@@ -331,27 +467,32 @@ int main(void)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(LED_PORT, &GPIO_InitStruct);
     HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);  // Включаем транзистор
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);  // Включить светодиод
+
+    // Включаем транзистор для измерения напряжения
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+
     if(!is_rtc_initialized()) {
         initialize_rtc();
     }
 
     calendar_data = read_from_flash();
+    data_received_from_main = is_data_valid(&calendar_data);
 
-    if(is_data_valid(&calendar_data)) {
+    if(data_received_from_main) {
         RTC_TimeTypeDef sTime = {0};
         RTC_DateTypeDef sDate = {0};
 
         convert_from_timestamp(calendar_data.timestamp, &sDate, &sTime);
         HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
         HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+
+        // Отправляем текущие данные при старте (если есть валидные данные)
+        send_datetime_with_voltage_and_temp(); // Используем функцию с измерением напряжения и температуры
     }
 
     uart_last_rx_time = HAL_GetTick();
     last_rtc_seconds = 0;
-    seconds_counter = 0;
+    period_counter = 0;
 
     HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
 
@@ -368,14 +509,13 @@ int main(void)
             HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
         }
 
-        if(is_data_valid(&calendar_data)) {
+        if(data_received_from_main) {
             update_calendar();
         }
 
         HAL_Delay(10);
     }
 }
-
 /* System Clock Configuration */
 void SystemClock_Config(void)
 {
