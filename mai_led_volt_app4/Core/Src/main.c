@@ -46,6 +46,8 @@
 #define sx1262_txen_port GPIOB
 #define sx1262_reset_pin GPIO_PIN_7
 #define sx1262_reset_port GPIOC
+
+#define USB_CONNECTED() HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -153,6 +155,10 @@ int8_t pa_power = 10;
 uint32_t frequency = 868000000U;
 bool lora_initialized = false;
 uint32_t lora_last_send_time = 0;  // Добавьте эту переменную
+
+
+bool usb_connected_prev = false;
+bool usb_connected_current = false;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -1169,12 +1175,18 @@ bool InitializeLoRa(void) {
   * @brief Отправка данных через LoRa
   */
 void SendTestDataViaLoRa(void) {
-    if (!lora_initialized) {
-        if (!InitializeLoRa()) {
-            SendUSBDebugMessage("LoRa not initialized, cannot send data");
-            return;
-        }
-    }
+
+	 // Не отправляем данные, если USB подключен
+	    if (USB_CONNECTED()) {
+	        return;
+	    }
+
+	    if (!lora_initialized) {
+	        if (!InitializeLoRa()) {
+	            // SendUSBDebugMessage("LoRa not initialized, cannot send data");
+	            return;
+	        }
+	    }
 
     // Создаем тестовые данные - 5 чисел (например: 1,2,3,4,5)
     const uint8_t test_data[] = {1, 2, 3, 4, 5};
@@ -1241,41 +1253,81 @@ int main(void)
 
   HAL_UART_Receive_IT(&huart1, (uint8_t*)uart_rx_buf, 1);
 
-
   // Загружаем параметры из энергонезависимой памяти при старте
   HAL_Delay(1000);
   LoadParametersFromFlash();
   HAL_Delay(1000);
 
+  // Инициализируем LoRa только если USB не подключен
+  if (!USB_CONNECTED()) {
+      InitializeLoRa();
+  }
 
-  InitializeLoRa();
+
+  // Инициализируем состояние USB при старте
+  usb_connected_current = USB_CONNECTED();
+  usb_connected_prev = usb_connected_current;
+
+  if (usb_connected_current) {
+      SendUSBDebugMessage("USB connected at startup");
+  } else {
+      SendUSBDebugMessage("USB disconnected at startup");
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1) {
 
-	    // Отправка тестовых данных через LoRa каждые 5 секунд
-	    if (HAL_GetTick() - lora_last_send_time >= 5000) {
-	        lora_last_send_time = HAL_GetTick();
-	        SendTestDataViaLoRa();
-	    }
+	  // Проверяем состояние подключения USB
+	      usb_connected_current = USB_CONNECTED();
 
-	  // Обработка USB команд
-	      if (new_data_received) {
-	          if (strncmp((char*)usb_rx_buffer, "SETPARAMS=", 10) == 0) {
-	              ParseParameters((char*)usb_rx_buffer + 10);
-	              SendParametersResponse();
+	      // Обнаружили изменение состояния USB
+	      if (usb_connected_current != usb_connected_prev) {
+	          if (usb_connected_current) {
+	              SendUSBDebugMessage("USB connected");
+	              // При подключении USB останавливаем работу LoRa
+	              lora_initialized = false;
+	          } else {
+	              SendUSBDebugMessage("USB disconnected");
+	              // При отключении USB инициализируем LoRa
+	              InitializeLoRa();
 	          }
-	          else if (strncmp((char*)usb_rx_buffer, "1", 1) == 0) {
-	              ProcessUSBCommand('1');
-	          }
-	          memset((void*)usb_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-	          usb_rx_index = 0;
-	          new_data_received = 0;
+	          usb_connected_prev = usb_connected_current;
 	      }
 
-	      // Обработка UART от дежурного МК
+	      // Логика работы в зависимости от состояния USB
+	      if (usb_connected_current) {
+	          // Режим с подключенным USB - работаем только с USB
+	          if (new_data_received) {
+	              if (strncmp((char*)usb_rx_buffer, "SETPARAMS=", 10) == 0) {
+	                  ParseParameters((char*)usb_rx_buffer + 10);
+	                  SendParametersResponse();
+	              }
+	              else if (strncmp((char*)usb_rx_buffer, "1", 1) == 0) {
+	                  ProcessUSBCommand('1');
+	              }
+	              memset((void*)usb_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+	              usb_rx_index = 0;
+	              new_data_received = 0;
+	          }
+
+	          // Проверяем, нужно ли выполнить расчет толщины
+	          if (calculate_thickness_requested && parameters_initialized) {
+	              calculate_thickness_requested = false;
+	              ProcessDataByMethod();
+	              SendUSBDebugMessage("Thickness calculation completed");
+	          }
+	      } else {
+	          // Режим без USB - работаем только с LoRa
+	          // Отправка данных через LoRa каждые 5 секунд
+	          if (HAL_GetTick() - lora_last_send_time >= 5000) {
+	              lora_last_send_time = HAL_GetTick();
+	              SendTestDataViaLoRa();
+	          }
+	      }
+
+	      // Обработка UART от дежурного МК (работает в обоих режимах)
 	      if(uart_message_received) {
 	          uart_message_received = 0;
 	          ProcessUARTCommand((uint8_t*)uart_rx_data, uart_rx_len);
@@ -1286,13 +1338,6 @@ int main(void)
 	          uart_rx_pos = 0;
 	          memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
 	          HAL_UART_Receive_IT(&huart1, (uint8_t*)uart_rx_buf, 1);
-	      }
-
-	      // Проверяем, нужно ли выполнить расчет толщин
-	      if (calculate_thickness_requested && parameters_initialized) {
-	          calculate_thickness_requested = false;
-	          ProcessDataByMethod();
-	          SendUSBDebugMessage("Thickness calculation completed");
 	      }
 
 	      HAL_Delay(10);
