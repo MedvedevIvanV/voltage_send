@@ -45,7 +45,7 @@ UART_HandleTypeDef huart1;
 SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
-char usb_msg[512];                   // Буфер для USB сообщений
+char usb_msg[1024];                   // Буфер для USB сообщений
 
 // Добавляем объявления переменных из usbd_cdc_if.c
 extern volatile uint8_t usb_rx_buffer[USB_RX_BUFFER_SIZE];
@@ -119,6 +119,8 @@ volatile uint8_t uart_message_received = 0;
 
 float thermocouple_temperature = 0.0f;
 bool thermocouple_error = false;
+
+float thickness_value = 0.0f;  // Глобальная переменная для хранения толщины
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -455,7 +457,7 @@ void CalculateZeroCrossingThickness(const float32_t* data) {
         return;
     }
 
-    // ВАЖНО: вычисляем one_point_mm здесь для методов 1 и 2
+    // Вычисляем one_point_mm для методов 1 и 2
     one_point_mm = 1.0f / (params.wave_speed * 1000.0f * frequency);
 
     uint32_t first_above_threshold_index = 0;
@@ -472,6 +474,7 @@ void CalculateZeroCrossingThickness(const float32_t* data) {
 
     if (!found_threshold) {
         SendUSBDebugMessage("Zero crossing: threshold not found");
+        thickness_value = 0.0f; // Сбрасываем толщину при ошибке
         return;
     }
 
@@ -486,16 +489,19 @@ void CalculateZeroCrossingThickness(const float32_t* data) {
 
     if (zero_crossing_index == 0) {
         SendUSBDebugMessage("Zero crossing: zero crossing not found");
+        thickness_value = 0.0f; // Сбрасываем толщину при ошибке
         return;
     }
 
     uint32_t final_index = zero_crossing_index + params.probe_length;
-    float thickness = final_index / (2.0f * one_point_mm);
+    thickness_value = final_index / (2.0f * one_point_mm); // Сохраняем толщину
 
-    snprintf(usb_msg, sizeof(usb_msg), "Zero_crossing:%.3f\r\n", thickness);
+    snprintf(usb_msg, sizeof(usb_msg), "Zero_crossing:%.3f\r\n", thickness_value);
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
     HAL_Delay(10);
 }
+
+
 
 /**
   * @brief Расчет толщины методом по стробам
@@ -506,7 +512,7 @@ void CalculateStrobeThickness(const float32_t* data) {
         return;
     }
 
-    // ВАЖНО: вычисляем one_point_mm здесь для методов 1 и 2
+    // Вычисляем one_point_mm для методов 1 и 2
     one_point_mm = 1.0f / (params.wave_speed * 1000.0f * frequency);
 
     float32_t max_value_first = -FLT_MAX;
@@ -530,17 +536,17 @@ void CalculateStrobeThickness(const float32_t* data) {
 
     if (max_value_first == -FLT_MAX || max_value_second == -FLT_MAX) {
         SendUSBDebugMessage("Strobe method: max values not found");
+        thickness_value = 0.0f; // Сбрасываем толщину при ошибке
         return;
     }
 
     uint32_t index_difference = max_index_second - max_index_first;
-    float thickness = index_difference / (2.0f * one_point_mm);
+    thickness_value = index_difference / (2.0f * one_point_mm); // Сохраняем толщину
 
-    snprintf(usb_msg, sizeof(usb_msg), "Strobe:%.3f\r\n", thickness);
+    snprintf(usb_msg, sizeof(usb_msg), "Strobe:%.3f\r\n", thickness_value);
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
     HAL_Delay(10);
 }
-
 /**
   * @brief Расчет толщины автокорреляционным методом и отправка результата по USB
   */
@@ -552,9 +558,9 @@ void CalculateAndSendACFThickness(void) {
 
     one_point_mm = 1.0f / (params.wave_speed * 1000.0f * frequency);
     max_index = FindMaxAutocorrelationIndex();
-    float thickness = max_index / (2.0f * one_point_mm);
+    thickness_value = max_index / (2.0f * one_point_mm);  // Сохраняем толщину в глобальную переменную
 
-    snprintf(usb_msg, sizeof(usb_msg), "ACF:%.3f\r\n", thickness);
+    snprintf(usb_msg, sizeof(usb_msg), "ACF:%.3f\r\n", thickness_value);
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
     HAL_Delay(10);
 }
@@ -776,21 +782,48 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
             // ИЗМЕРЯЕМ ТЕМПЕРАТУРУ ТЕРМОПАРЫ
             thermocouple_temperature = Get_Thermocouple_Temperature();
 
-            // Выводим полученные данные по USB с температурой термопары
+            // ВЫЧИСЛЯЕМ ТОЛЩИНУ (если еще не вычислена)
+            if (thickness_value == 0.0f && parameters_initialized) {
+                // Запускаем расчет толщины
+                calculate_thickness_requested = true;
+
+                // Ждем завершения расчета
+                uint32_t start_time = HAL_GetTick();
+                while (calculate_thickness_requested && (HAL_GetTick() - start_time) < 5000) {
+                    // Обрабатываем данные
+                    if (calculate_thickness_requested) {
+                        calculate_thickness_requested = false;
+                        ProcessDataByMethod();
+                    }
+                    HAL_Delay(10);
+                }
+            }
+
+            // ОТПРАВЛЯЕМ РАСШИРЕННЫЕ ДАННЫЕ ПО USB
             if(thermocouple_error) {
                 snprintf(usb_msg, sizeof(usb_msg),
-                        "BACKUP_DATA: Date=%s, Period=%lu, Voltage=%.4fV, Temp=%.2f°C, Thermocouple=ERROR\r\n",
-                        start_date, period, received_voltage, received_temp);
+                        "%s|%lu|%.4f|%.2f|ERROR|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
+                        start_date, period, received_voltage, received_temp, thickness_value,
+                        params.wave_speed, params.threshold, params.threshold_zero_crossing,
+                        params.start_index, params.probe_length, params.first_left_strobe,
+                        params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
+                        params.method, params.end_index, params.cycle_number, params.sensor_number,
+                        params.gain, start_date, period);
             } else {
                 snprintf(usb_msg, sizeof(usb_msg),
-                        "BACKUP_DATA: Date=%s, Period=%lu, Voltage=%.4fV, Temp=%.2f°C, Thermocouple=%.2f°C\r\n",
-                        start_date, period, received_voltage, received_temp, thermocouple_temperature);
+                        "%s|%lu|%.4f|%.2f|%.2f|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
+                        start_date, period, received_voltage, received_temp, thermocouple_temperature,
+                        thickness_value, params.wave_speed, params.threshold, params.threshold_zero_crossing,
+                        params.start_index, params.probe_length, params.first_left_strobe,
+                        params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
+                        params.method, params.end_index, params.cycle_number, params.sensor_number,
+                        params.gain, start_date, period);
             }
 
             CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
             HAL_Delay(10);
 
-            SendUSBDebugMessage("DateTime, period, voltage, temperature and thermocouple from FLASH backup MCU");
+            SendUSBDebugMessage("Extended data sent via USB");
         }
     }
     // Формат с напряжением (без температуры)
@@ -813,21 +846,48 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
             // ИЗМЕРЯЕМ ТЕМПЕРАТУРУ ТЕРМОПАРЫ
             thermocouple_temperature = Get_Thermocouple_Temperature();
 
-            // Выводим полученные данные по USB с температурой термопары
+            // ВЫЧИСЛЯЕМ ТОЛЩИНУ (если еще не вычислена)
+            if (thickness_value == 0.0f && parameters_initialized) {
+                // Запускаем расчет толщины
+                calculate_thickness_requested = true;
+
+                // Ждем завершения расчета
+                uint32_t start_time = HAL_GetTick();
+                while (calculate_thickness_requested && (HAL_GetTick() - start_time) < 5000) {
+                    // Обрабатываем данные
+                    if (calculate_thickness_requested) {
+                        calculate_thickness_requested = false;
+                        ProcessDataByMethod();
+                    }
+                    HAL_Delay(10);
+                }
+            }
+
+            // ОТПРАВЛЯЕМ РАСШИРЕННЫЕ ДАННЫЕ ПО USB
             if(thermocouple_error) {
                 snprintf(usb_msg, sizeof(usb_msg),
-                        "BACKUP_DATA: Date=%s, Period=%lu, Voltage=%.4fV, Thermocouple=ERROR\r\n",
-                        start_date, period, received_voltage);
+                        "%s|%lu|%.4f|ERROR|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
+                        start_date, period, received_voltage, thickness_value,
+                        params.wave_speed, params.threshold, params.threshold_zero_crossing,
+                        params.start_index, params.probe_length, params.first_left_strobe,
+                        params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
+                        params.method, params.end_index, params.cycle_number, params.sensor_number,
+                        params.gain, start_date, period);
             } else {
                 snprintf(usb_msg, sizeof(usb_msg),
-                        "BACKUP_DATA: Date=%s, Period=%lu, Voltage=%.4fV, Thermocouple=%.2f°C\r\n",
-                        start_date, period, received_voltage, thermocouple_temperature);
+                        "%s|%lu|%.4f|%.2f|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
+                        start_date, period, received_voltage, thermocouple_temperature, thickness_value,
+                        params.wave_speed, params.threshold, params.threshold_zero_crossing,
+                        params.start_index, params.probe_length, params.first_left_strobe,
+                        params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
+                        params.method, params.end_index, params.cycle_number, params.sensor_number,
+                        params.gain, start_date, period);
             }
 
             CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
             HAL_Delay(10);
 
-            SendUSBDebugMessage("DateTime, period, voltage and thermocouple from FLASH backup MCU");
+            SendUSBDebugMessage("Extended data sent via USB");
         }
     }
     // Старый формат (только дата, время и период)
@@ -848,21 +908,48 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
             // ИЗМЕРЯЕМ ТЕМПЕРАТУРУ ТЕРМОПАРЫ
             thermocouple_temperature = Get_Thermocouple_Temperature();
 
-            // Выводим полученные данные по USB с температурой термопары
+            // ВЫЧИСЛЯЕМ ТОЛЩИНУ (если еще не вычислена)
+            if (thickness_value == 0.0f && parameters_initialized) {
+                // Запускаем расчет толщины
+                calculate_thickness_requested = true;
+
+                // Ждем завершения расчета
+                uint32_t start_time = HAL_GetTick();
+                while (calculate_thickness_requested && (HAL_GetTick() - start_time) < 5000) {
+                    // Обрабатываем данные
+                    if (calculate_thickness_requested) {
+                        calculate_thickness_requested = false;
+                        ProcessDataByMethod();
+                    }
+                    HAL_Delay(10);
+                }
+            }
+
+            // ОТПРАВЛЯЕМ РАСШИРЕННЫЕ ДАННЫЕ ПО USB
             if(thermocouple_error) {
                 snprintf(usb_msg, sizeof(usb_msg),
-                        "BACKUP_DATA: Date=%s, Period=%lu, Thermocouple=ERROR\r\n",
-                        start_date, period);
+                        "%s|%lu|ERROR|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
+                        start_date, period, thickness_value,
+                        params.wave_speed, params.threshold, params.threshold_zero_crossing,
+                        params.start_index, params.probe_length, params.first_left_strobe,
+                        params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
+                        params.method, params.end_index, params.cycle_number, params.sensor_number,
+                        params.gain, start_date, period);
             } else {
                 snprintf(usb_msg, sizeof(usb_msg),
-                        "BACKUP_DATA: Date=%s, Period=%lu, Thermocouple=%.2f°C\r\n",
-                        start_date, period, thermocouple_temperature);
+                        "%s|%lu|%.2f|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
+                        start_date, period, thermocouple_temperature, thickness_value,
+                        params.wave_speed, params.threshold, params.threshold_zero_crossing,
+                        params.start_index, params.probe_length, params.first_left_strobe,
+                        params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
+                        params.method, params.end_index, params.cycle_number, params.sensor_number,
+                        params.gain, start_date, period);
             }
 
             CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
             HAL_Delay(10);
 
-            SendUSBDebugMessage("DateTime, period and thermocouple from FLASH backup MCU (old format)");
+            SendUSBDebugMessage("Extended data sent via USB");
         }
     }
 }
