@@ -1,0 +1,2 @@
+../Core/Src/temperature_sensor.c:10:10:Read_Thermocouple_Temperature	6
+../Core/Src/temperature_sensor.c:47:7:Get_Thermocouple_Temperature	2

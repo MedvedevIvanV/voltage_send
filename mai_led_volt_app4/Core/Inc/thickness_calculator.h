@@ -1,11 +1,15 @@
-#ifndef THICKNESS_CALCULATIONS_H
-#define THICKNESS_CALCULATIONS_H
+#ifndef THICKNESS_CALCULATOR_H
+#define THICKNESS_CALCULATOR_H
 
 #include "main.h"
 #include "arm_math.h"
 #include <stdbool.h>
 
-// Структура параметров (должна быть такой же как в main.c)
+// Определения размеров
+#define FINAL_DATA_SIZE 10000
+#define DATA_VALUES_COUNT 4600
+
+// Структура для хранения параметров
 typedef struct {
     uint32_t start_index;
     float wave_speed;
@@ -24,26 +28,38 @@ typedef struct {
     uint32_t crc;
 } Parameters_t;
 
-// Внешние переменные, которые будут определены в main.c
+// Внешние переменные
 extern Parameters_t params;
 extern bool parameters_initialized;
-extern float frequency;
-extern const float measurement_data[];
-extern float32_t normalized_data[];
-extern float32_t autocorrelation_result[];
-extern float32_t final_data[];
+extern bool calculate_thickness_requested;
+extern float thickness_value;
+extern float frequency_ns;
+
+// Буферы данных
+extern float32_t normalized_data[DATA_VALUES_COUNT];
+extern float32_t autocorrelation_result[DATA_VALUES_COUNT];
+extern float32_t temp_data[FINAL_DATA_SIZE];
+extern float32_t final_data[FINAL_DATA_SIZE];
 extern uint32_t successful_cycles;
 
-// Объявления функций
+// Функции для работы с параметрами
+void InitializeParameters(void);
+void SaveParametersToFlash(void);
+void LoadParametersFromFlash(void);
+uint32_t CalculateCRC32(const uint8_t *data, size_t length);
+
+// Функции расчета толщины
 void CalculateZeroCrossingThickness(const float32_t* data);
 void CalculateStrobeThickness(const float32_t* data);
 void CalculateAndSendACFThickness(void);
+void ProcessDataByMethod(void);
+bool ProcessCycle(uint32_t cycle_num);
+bool CheckThreshold(const float32_t* data, uint32_t size);
+
+// Вспомогательные функции
+void AddRandomNoiseAndExtend(const float32_t* src, float32_t* dest, uint32_t dest_size);
 void NormalizeData(void);
 void CalculateAutocorrelation(void);
 uint32_t FindMaxAutocorrelationIndex(void);
-bool CheckThreshold(const float32_t* data, uint32_t size);
-void AddRandomNoiseAndExtend(const float32_t* src, float32_t* dest, uint32_t dest_size);
-bool ProcessCycle(uint32_t cycle_num);
-void ProcessDataByMethod(void);
 
-#endif // THICKNESS_CALCULATIONS_H
+#endif // THICKNESS_CALCULATOR_H

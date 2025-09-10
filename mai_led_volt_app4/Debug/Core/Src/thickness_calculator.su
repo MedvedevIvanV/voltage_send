@@ -1,0 +1,14 @@
+../Core/Src/thickness_calculator.c:34:10:CalculateCRC32	32	static
+../Core/Src/thickness_calculator.c:48:6:LoadParametersFromFlash	24	static
+../Core/Src/thickness_calculator.c:65:6:SaveParametersToFlash	32	static
+../Core/Src/thickness_calculator.c:88:6:InitializeParameters	8	static
+../Core/Src/thickness_calculator.c:112:6:AddRandomNoiseAndExtend	40	static
+../Core/Src/thickness_calculator.c:126:6:CheckThreshold	24	static
+../Core/Src/thickness_calculator.c:143:6:ProcessCycle	24	static
+../Core/Src/thickness_calculator.c:169:6:NormalizeData	18416	static
+../Core/Src/thickness_calculator.c:187:6:CalculateAutocorrelation	48	static
+../Core/Src/thickness_calculator.c:203:10:FindMaxAutocorrelationIndex	24	static
+../Core/Src/thickness_calculator.c:226:6:CalculateZeroCrossingThickness	48	static
+../Core/Src/thickness_calculator.c:273:6:CalculateStrobeThickness	48	static
+../Core/Src/thickness_calculator.c:312:6:CalculateAndSendACFThickness	16	static
+../Core/Src/thickness_calculator.c:326:6:ProcessDataByMethod	16	static
