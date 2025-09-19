@@ -18,11 +18,11 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include <string.h>
-#include <stdio.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <string.h>
+#include <stdio.h>
 
 /* USER CODE END Includes */
 
@@ -47,6 +47,8 @@ ADC_HandleTypeDef hadc1;
 
 UART_HandleTypeDef hlpuart1;
 
+RTC_HandleTypeDef hrtc;
+
 /* USER CODE BEGIN PV */
 uint8_t uart_rx_buf[UART_RX_BUF_SIZE];
 uint8_t uart_rx_pos = 0;
@@ -54,6 +56,9 @@ volatile uint8_t uart_cmd_ready = 0;
 uint32_t uart_last_rx_time = 0;
 uint32_t period_sec = 0;
 uint32_t last_send_time = 0;
+
+// Флаг для отслеживания пробуждения
+volatile uint8_t wakeup_flag = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -61,6 +66,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_LPUART1_UART_Init(void);
 static void MX_ADC1_Init(void);
+static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 static float read_voltage(void);
 static float read_temperature(void);
@@ -202,9 +208,26 @@ static void process_uart_command(uint8_t* data, uint8_t len)
         // Отправляем ответ с напряжением и температурой
         send_datetime_with_voltage_and_temp(date_str, time_str);
 
-        // Выключаем PC13 на 5 секунд после отправки
+        // Ждем 5 секунд после отправки
+        HAL_Delay(5000);
+
+        // Выключаем пины PB0 и PC13
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
         HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
-        last_send_time = HAL_GetTick();
+
+        // Настраиваем RTC WakeUp для периода сна
+        HAL_RTCEx_DeactivateWakeUpTimer(&hrtc);
+
+        // Расчет для периода сна: LSI = ~32.768 kHz, делитель 16 -> 2048 Гц
+        // 2048 Гц * период_сек = количество тиков
+        uint32_t wakeup_ticks = (period_sec * 2048) - 1;
+        if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, wakeup_ticks, RTC_WAKEUPCLOCK_RTCCLK_DIV16, 0) != HAL_OK)
+        {
+            Error_Handler();
+        }
+
+        // Переходим в режим сна
+        HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
     }
 
     uart_rx_pos = 0;
@@ -227,6 +250,26 @@ static void send_datetime_with_voltage_and_temp(char* date_str, char* time_str)
            date_str, time_str, period_sec, voltage, temperature);
 
     HAL_UART_Transmit(&hlpuart1, (uint8_t*)uart_msg, strlen(uart_msg), 100);
+}
+
+/**
+  * @brief  Обработчик прерывания WakeUp Timer.
+  * @retval None
+  */
+void HAL_RTCEx_WakeUpTimerEventCallback(RTC_HandleTypeDef *hrtc)
+{
+  // Устанавливаем флаг пробуждения
+  wakeup_flag = 1;
+}
+
+/**
+  * @brief  Обработчик прерывания RTC WakeUp.
+  * @retval None
+  */
+void RTC_WKUP_IRQHandler(void)
+{
+  HAL_RTCEx_WakeUpTimerIRQHandler(&hrtc);
+  __HAL_RTC_WAKEUPTIMER_EXTI_CLEAR_FLAG();
 }
 
 /* USER CODE END 0 */
@@ -261,9 +304,15 @@ int main(void)
   MX_GPIO_Init();
   MX_LPUART1_UART_Init();
   MX_ADC1_Init();
+  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
-  // Включаем транзистор для измерения напряжения
+  // Включаем обработчик прерывания RTC WakeUp
+  HAL_NVIC_SetPriority(RTC_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(RTC_IRQn);
+
+  // Включаем пины PC13 и PB0 по умолчанию
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
 
   // Инициализируем UART прием
   uart_last_rx_time = HAL_GetTick();
@@ -274,6 +323,48 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    // Проверяем флаг пробуждения от RTC
+    if(wakeup_flag)
+    {
+      // Сбрасываем флаг
+      wakeup_flag = 0;
+
+      // Включаем пины PC13 и PB0
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+      // Ждем 5 секунд после отправки
+      HAL_Delay(5000);
+      // Измеряем напряжение и температуру
+      float voltage = read_voltage();
+      float temperature = read_temperature();
+
+      // Формируем и отправляем сообщение основному МК
+      char uart_msg[128];
+      snprintf(uart_msg, sizeof(uart_msg),
+             "DATE:2000-01-01;TIME:00:00:00;PERIOD:%lu;VOLTAGE:%.4f;TEMP:%.2f\r\n",
+             period_sec, voltage, temperature);
+
+      HAL_UART_Transmit(&hlpuart1, (uint8_t*)uart_msg, strlen(uart_msg), 100);
+
+      // Ждем 5 секунд после отправки
+      HAL_Delay(10000);
+
+      // Выключаем пины PB0 и PC13
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+
+      // Снова настраиваем RTC WakeUp для следующего периода сна
+      HAL_RTCEx_DeactivateWakeUpTimer(&hrtc);
+      uint32_t wakeup_ticks = (period_sec * 2048) - 1;
+      if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, wakeup_ticks, RTC_WAKEUPCLOCK_RTCCLK_DIV16, 0) != HAL_OK)
+      {
+        Error_Handler();
+      }
+
+      // Переходим в режим сна
+      HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+    }
+
     // Обработка UART команд
     if(uart_cmd_ready) {
         uart_cmd_ready = 0;
@@ -287,32 +378,13 @@ int main(void)
         HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
     }
 
-    // Автоматическая отправка каждые 5 секунд (если период установлен)
-    if(period_sec > 0 && (HAL_GetTick() - last_send_time) >= 5000) {
-        // Используем текущее время как заглушку для автоматической отправки
-        send_datetime_with_voltage_and_temp("2000-01-01", "00:00:00");
-        last_send_time = HAL_GetTick();
-
-        // Выключаем PC13 на 5 секунд после отправки
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
-    }
-
-    // Включаем PC13 через 5 секунд после выключения
-    if((HAL_GetTick() - last_send_time) >= 5000 && (HAL_GetTick() - last_send_time) < 10000) {
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
-    }
-
-    // Мигание светодиодом
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
-    HAL_Delay(1000);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-    HAL_Delay(1000);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
+
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -332,7 +404,9 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.LSIDiv = RCC_LSI_DIV1;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.MSIState = RCC_MSI_ON;
   RCC_OscInitStruct.MSICalibrationValue = RCC_MSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_6;
@@ -493,6 +567,54 @@ static void MX_LPUART1_UART_Init(void)
   /* USER CODE BEGIN LPUART1_Init 2 */
 
   /* USER CODE END LPUART1_Init 2 */
+
+}
+
+/**
+  * @brief RTC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RTC_Init(void)
+{
+
+  /* USER CODE BEGIN RTC_Init 0 */
+
+  /* USER CODE END RTC_Init 0 */
+
+  RTC_PrivilegeStateTypeDef privilegeState = {0};
+
+  /* USER CODE BEGIN RTC_Init 1 */
+
+  /* USER CODE END RTC_Init 1 */
+
+  /** Initialize RTC Only
+  */
+  hrtc.Instance = RTC;
+  hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+  hrtc.Init.AsynchPrediv = 127;
+  hrtc.Init.SynchPrediv = 255;
+  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+  hrtc.Init.OutPutRemap = RTC_OUTPUT_REMAP_NONE;
+  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+  hrtc.Init.OutPutPullUp = RTC_OUTPUT_PULLUP_NONE;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  privilegeState.rtcPrivilegeFull = RTC_PRIVILEGE_FULL_NO;
+  privilegeState.backupRegisterPrivZone = RTC_PRIVILEGE_BKUP_ZONE_NONE;
+  privilegeState.backupRegisterStartZone2 = RTC_BKP_DR0;
+  privilegeState.backupRegisterStartZone3 = RTC_BKP_DR0;
+  if (HAL_RTCEx_PrivilegeModeSet(&hrtc, &privilegeState) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /* USER CODE BEGIN RTC_Init 2 */
+
+  /* USER CODE END RTC_Init 2 */
 
 }
 
