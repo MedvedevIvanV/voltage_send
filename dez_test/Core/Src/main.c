@@ -35,6 +35,7 @@
 /* USER CODE BEGIN PD */
 #define UART_RX_BUF_SIZE       128
 #define UART_TIMEOUT_MS        100
+#define COMPLETE_TIMEOUT_MS    15000  // 15 секунд ожидания COMPLETE
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -59,6 +60,9 @@ uint32_t last_send_time = 0;
 
 // Флаг для отслеживания пробуждения
 volatile uint8_t wakeup_flag = 0;
+
+// Флаг для получения COMPLETE сообщения
+volatile uint8_t complete_received = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -72,6 +76,7 @@ static float read_voltage(void);
 static float read_temperature(void);
 static void process_uart_command(uint8_t* data, uint8_t len);
 static void send_datetime_with_voltage_and_temp(char* date_str, char* time_str);
+static void enter_sleep_mode(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -79,6 +84,7 @@ static void send_datetime_with_voltage_and_temp(char* date_str, char* time_str);
 
 /**
   * @brief Read voltage from ADC
+  *
   */
 static float read_voltage(void)
 {
@@ -172,6 +178,15 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     if(huart->Instance == LPUART1) {
         uart_last_rx_time = HAL_GetTick();
 
+        // Проверяем, не получено ли сообщение COMPLETE
+        if (uart_rx_pos >= 8 && strncmp((char*)&uart_rx_buf[uart_rx_pos - 8], "COMPLETE", 8) == 0) {
+            complete_received = 1;
+            uart_rx_pos = 0;
+            memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
+            HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
+            return;
+        }
+
         if(uart_rx_buf[uart_rx_pos] == '\n' || uart_rx_pos >= sizeof(uart_rx_buf)-1) {
             uart_cmd_ready = 1;
             uart_rx_buf[uart_rx_pos] = '\0';
@@ -181,6 +196,30 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
         }
     }
+}
+
+/**
+  * @brief Переход в режим сна с настройкой RTC
+  */
+static void enter_sleep_mode(void)
+{
+    // Выключаем пины PB0 и PC13
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+
+    // Настраиваем RTC WakeUp для периода сна
+    HAL_RTCEx_DeactivateWakeUpTimer(&hrtc);
+
+    // Расчет для периода сна: LSI = ~32.768 kHz, делитель 16 -> 2048 Гц
+    // 2048 Гц * период_сек = количество тиков
+    uint32_t wakeup_ticks = (period_sec * 2048) - 1;
+    if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, wakeup_ticks, RTC_WAKEUPCLOCK_RTCCLK_DIV16, 0) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    // Переходим в режим сна
+    HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
 }
 
 /**
@@ -208,26 +247,30 @@ static void process_uart_command(uint8_t* data, uint8_t len)
         // Отправляем ответ с напряжением и температурой
         send_datetime_with_voltage_and_temp(date_str, time_str);
 
-        // Ждем 5 секунд после отправки
-        HAL_Delay(5000);
+        // Ждем COMPLETE сообщение или таймаут 10 секунд
+        uint32_t start_time = HAL_GetTick();
+        complete_received = 0;
 
-        // Выключаем пины PB0 и PC13
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+        while ((HAL_GetTick() - start_time) < COMPLETE_TIMEOUT_MS && !complete_received) {
+            // Обрабатываем входящие UART данные
+            if(uart_cmd_ready) {
+                uart_cmd_ready = 0;
+                // Если пришла новая команда, обрабатываем ее
+                process_uart_command(uart_rx_buf, uart_rx_pos);
+            }
 
-        // Настраиваем RTC WakeUp для периода сна
-        HAL_RTCEx_DeactivateWakeUpTimer(&hrtc);
+            // Таймаут UART приема
+            if(uart_rx_pos > 0 && (HAL_GetTick() - uart_last_rx_time) > UART_TIMEOUT_MS) {
+                uart_rx_pos = 0;
+                memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
+                HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
+            }
 
-        // Расчет для периода сна: LSI = ~32.768 kHz, делитель 16 -> 2048 Гц
-        // 2048 Гц * период_сек = количество тиков
-        uint32_t wakeup_ticks = (period_sec * 2048) - 1;
-        if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, wakeup_ticks, RTC_WAKEUPCLOCK_RTCCLK_DIV16, 0) != HAL_OK)
-        {
-            Error_Handler();
+            HAL_Delay(10);
         }
 
-        // Переходим в режим сна
-        HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+        // Переходим в сон независимо от того, получен COMPLETE или нет
+        enter_sleep_mode();
     }
 
     uart_rx_pos = 0;
@@ -332,8 +375,10 @@ int main(void)
       // Включаем пины PC13 и PB0
       HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
-      // Ждем 5 секунд после отправки
-      HAL_Delay(5000);
+
+      // Ждем 3 секунды после включения
+      HAL_Delay(3000);
+
       // Измеряем напряжение и температуру
       float voltage = read_voltage();
       float temperature = read_temperature();
@@ -346,23 +391,29 @@ int main(void)
 
       HAL_UART_Transmit(&hlpuart1, (uint8_t*)uart_msg, strlen(uart_msg), 100);
 
-      // Ждем 5 секунд после отправки
-      HAL_Delay(10000);
+      // Ждем COMPLETE сообщение или таймаут 10 секунд
+      uint32_t start_time = HAL_GetTick();
+      complete_received = 0;
 
-      // Выключаем пины PB0 и PC13
-      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+      while ((HAL_GetTick() - start_time) < COMPLETE_TIMEOUT_MS && !complete_received) {
+          // Обрабатываем входящие UART данные
+          if(uart_cmd_ready) {
+              uart_cmd_ready = 0;
+              process_uart_command(uart_rx_buf, uart_rx_pos);
+          }
 
-      // Снова настраиваем RTC WakeUp для следующего периода сна
-      HAL_RTCEx_DeactivateWakeUpTimer(&hrtc);
-      uint32_t wakeup_ticks = (period_sec * 2048) - 1;
-      if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, wakeup_ticks, RTC_WAKEUPCLOCK_RTCCLK_DIV16, 0) != HAL_OK)
-      {
-        Error_Handler();
+          // Таймаут UART приема
+          if(uart_rx_pos > 0 && (HAL_GetTick() - uart_last_rx_time) > UART_TIMEOUT_MS) {
+              uart_rx_pos = 0;
+              memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
+              HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
+          }
+
+          HAL_Delay(10);
       }
 
-      // Переходим в режим сна
-      HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+      // Переходим в сон независимо от того, получен COMPLETE или нет
+      enter_sleep_mode();
     }
 
     // Обработка UART команд
@@ -384,6 +435,8 @@ int main(void)
   }
   /* USER CODE END 3 */
 }
+
+// Остальной код без изменений (SystemClock_Config, MX_ADC1_Init, MX_LPUART1_UART_Init, MX_RTC_Init, MX_GPIO_Init, Error_Handler)
 
 /**
   * @brief System Clock Configuration

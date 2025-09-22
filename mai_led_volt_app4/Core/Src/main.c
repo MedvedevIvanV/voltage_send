@@ -35,17 +35,22 @@
 // LoRa module pins
 #define sx1262_busy_pin GPIO_PIN_4
 #define sx1262_busy_port GPIOC
-#define sx1262_dio1_pin GPIO_PIN_5
-#define sx1262_dio1_port GPIOB
-#define sx1262_dio2_pin GPIO_PIN_8
-#define sx1262_dio2_port GPIOB
+#define sx1262_dio1_pin GPIO_PIN_2
+#define sx1262_dio1_port GPIOE
+#define sx1262_dio2_pin GPIO_PIN_1
+#define sx1262_dio2_port GPIOE
 #define sx1262_cs_pin GPIO_PIN_12
 #define sx1262_cs_port GPIOB
 #define sx1262_txen_pin GPIO_PIN_6
-#define sx1262_txen_port GPIOB
+#define sx1262_txen_port GPIOC
 #define sx1262_reset_pin GPIO_PIN_7
 #define sx1262_reset_port GPIOC
 #define USB_CONNECTED() HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)
+
+
+// Добавить новые определения
+#define ACK_STRING           "ACK\r\n"
+#define COMPLETE_STRING      "COMPLETE\r\n"
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -75,10 +80,6 @@ extern volatile uint16_t usb_rx_index;
 char start_date[20] = {0}; // Формат: "2024-01-15 14:30:25"
 uint32_t period = 0;
 
-// УДАЛИТЬ эти строки - они теперь в thickness_calculator.c
-// float32_t temp_data[FINAL_DATA_SIZE]; // Временный буфер для обработки
-// float32_t final_data[FINAL_DATA_SIZE]; // Финальный буфер для усредненных данных
-// uint32_t successful_cycles = 0; // Счетчик успешных циклов
 
 // UART переменные
 #define UART_TX_BUF_SIZE 128
@@ -103,7 +104,9 @@ int8_t pa_power = 10;
 uint32_t frequency = 868000000U;
 bool lora_initialized = false;
 uint32_t lora_last_send_time = 0;  // Добавьте эту переменную
-
+// Переменные для данных от дежурного МК
+float received_voltage = 0.0f;
+float received_temp = 0.0f;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -124,6 +127,8 @@ void SendDateTimeToBackupMCU(void);
 void ProcessUARTCommand(uint8_t* data, uint8_t len);
 bool InitializeLoRa(void);
 void SendTestDataViaLoRa(void);
+// Добавить прототип
+void SendUARTResponse(const char* response);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -311,221 +316,226 @@ void SendDateTimeToBackupMCU(void) {
   * @param len Длина данных
   */
 void ProcessUARTCommand(uint8_t* data, uint8_t len) {
+    // Немедленно отправляем ACK о получении данных
+    SendUARTResponse(ACK_STRING);
+    // Поиск всех параметров в данных
     char* date_ptr = strstr((char*)data, "DATE:");
     char* time_ptr = strstr((char*)data, ";TIME:");
     char* period_ptr = strstr((char*)data, ";PERIOD:");
     char* voltage_ptr = strstr((char*)data, ";VOLTAGE:");
     char* temp_ptr = strstr((char*)data, ";TEMP:");
 
-    // Новый формат с напряжением и температурой
-    if(date_ptr && time_ptr && period_ptr && voltage_ptr && temp_ptr) {
-        int year, month, day, hour, min, sec;
-        uint32_t received_period;
-        float received_voltage, received_temp;
+    // Инициализация значений по умолчанию
+    int year = 0, month = 0, day = 0, hour = 0, min = 0, sec = 0;
+    uint32_t received_period = 0;
+    received_voltage = 0.0f;
+    received_temp = 0.0f;
 
-        // Парсим дату, время, период, напряжение и температуру
-        if(sscanf(date_ptr, "DATE:%d-%d-%d", &year, &month, &day) == 3 &&
-           sscanf(time_ptr, ";TIME:%d:%d:%d", &hour, &min, &sec) == 3 &&
-           sscanf(period_ptr, ";PERIOD:%lu", &received_period) == 1 &&
-           sscanf(voltage_ptr, ";VOLTAGE:%f", &received_voltage) == 1 &&
-           sscanf(temp_ptr, ";TEMP:%f", &received_temp) == 1) {
+    // Парсинг доступных параметров
+    if(date_ptr) sscanf(date_ptr, "DATE:%d-%d-%d", &year, &month, &day);
+    if(time_ptr) sscanf(time_ptr, ";TIME:%d:%d:%d", &hour, &min, &sec);
+    if(period_ptr) sscanf(period_ptr, ";PERIOD:%lu", &received_period);
+    if(voltage_ptr) sscanf(voltage_ptr, ";VOLTAGE:%f", &received_voltage);
+    if(temp_ptr) sscanf(temp_ptr, ";TEMP:%f", &received_temp);
 
-            // Формируем строку даты в формате "YYYY-MM-DD HH:MM:SS"
-            snprintf(start_date, sizeof(start_date), "%04d-%02d-%02d %02d:%02d:%02d",
-                    year, month, day, hour, min, sec);
-            period = received_period;
+    // Формируем строку даты
+    snprintf(start_date, sizeof(start_date), "%04d-%02d-%02d %02d:%02d:%02d",
+            year, month, day, hour, min, sec);
+    period = received_period;
 
-            // ИЗМЕРЯЕМ ТЕМПЕРАТУРУ ТЕРМОПАРЫ
-            thermocouple_temperature = Get_Thermocouple_Temperature();
+    // ИЗМЕРЯЕМ ТЕМПЕРАТУРУ ТЕРМОПАРЫ
+    thermocouple_temperature = Get_Thermocouple_Temperature();
 
-            // ВЫЧИСЛЯЕМ ТОЛЩИНУ (если еще не вычислена)
-            if (thickness_value == 0.0f && parameters_initialized) {
-                // Запускаем расчет толщины
-                calculate_thickness_requested = true;
+    // ВЫЧИСЛЯЕМ ТОЛЩИНУ (если еще не вычислена)
+    if (thickness_value == 0.0f && parameters_initialized) {
+        calculate_thickness_requested = true;
 
-                // Ждем завершения расчета
-                uint32_t start_time = HAL_GetTick();
-                while (calculate_thickness_requested && (HAL_GetTick() - start_time) < 5000) {
-                    // Обрабатываем данные
-                    if (calculate_thickness_requested) {
-                        calculate_thickness_requested = false;
-                        ProcessDataByMethod();
-                    }
-                    HAL_Delay(10);
-                }
+        uint32_t start_time = HAL_GetTick();
+        while (calculate_thickness_requested && (HAL_GetTick() - start_time) < 5000) {
+            if (calculate_thickness_requested) {
+                calculate_thickness_requested = false;
+                ProcessDataByMethod();
             }
-
-            // ОТПРАВЛЯЕМ РАСШИРЕННЫЕ ДАННЫЕ ПО USB
-            if(thermocouple_error) {
-                snprintf(usb_msg, sizeof(usb_msg),
-                        "%s|%lu|%.4f|%.2f|ERROR|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
-                        start_date, period, received_voltage, received_temp, thickness_value,
-                        params.wave_speed, params.threshold, params.threshold_zero_crossing,
-                        params.start_index, params.probe_length, params.first_left_strobe,
-                        params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
-                        params.method, params.end_index, params.cycle_number, params.sensor_number,
-                        params.gain, start_date, period);
-            } else {
-                snprintf(usb_msg, sizeof(usb_msg),
-                        "%s|%lu|%.4f|%.2f|%.2f|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
-                        start_date, period, received_voltage, received_temp, thermocouple_temperature,
-                        thickness_value, params.wave_speed, params.threshold, params.threshold_zero_crossing,
-                        params.start_index, params.probe_length, params.first_left_strobe,
-                        params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
-                        params.method, params.end_index, params.cycle_number, params.sensor_number,
-                        params.gain, start_date, period);
-            }
-
-            CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
-            HAL_Delay(10);
-
-            SendUSBDebugMessage("Extended data sent via USB");
-            HAL_Delay(10);
-            SendTestDataViaLoRa();
-            HAL_Delay(10);
-            SendUSBDebugMessage("LoRa data sent after USB transmission");
             HAL_Delay(10);
         }
     }
-    // Формат с напряжением (без температуры)
-    else if(date_ptr && time_ptr && period_ptr && voltage_ptr) {
-        int year, month, day, hour, min, sec;
-        uint32_t received_period;
-        float received_voltage;
 
-        // Парсим дату, время, период и напряжение
-        if(sscanf(date_ptr, "DATE:%d-%d-%d", &year, &month, &day) == 3 &&
-           sscanf(time_ptr, ";TIME:%d:%d:%d", &hour, &min, &sec) == 3 &&
-           sscanf(period_ptr, ";PERIOD:%lu", &received_period) == 1 &&
-           sscanf(voltage_ptr, ";VOLTAGE:%f", &received_voltage) == 1) {
+    // ОТПРАВЛЯЕМ РАСШИРЕННЫЕ ДАННЫЕ ПО USB
+    if(thermocouple_error) {
+        snprintf(usb_msg, sizeof(usb_msg),
+                "%s|%lu|%.4f|%.2f|ERROR|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
+                start_date, period, received_voltage, received_temp, thickness_value,
+                params.wave_speed, params.threshold, params.threshold_zero_crossing,
+                params.start_index, params.probe_length, params.first_left_strobe,
+                params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
+                params.method, params.end_index, params.cycle_number, params.sensor_number,
+                params.gain, start_date, period);
+    } else {
+        snprintf(usb_msg, sizeof(usb_msg),
+                "%s|%lu|%.4f|%.2f|%.2f|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
+                start_date, period, received_voltage, received_temp, thermocouple_temperature,
+                thickness_value, params.wave_speed, params.threshold, params.threshold_zero_crossing,
+                params.start_index, params.probe_length, params.first_left_strobe,
+                params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
+                params.method, params.end_index, params.cycle_number, params.sensor_number,
+                params.gain, start_date, period);
+    }
 
-            // Формируем строку даты в формате "YYYY-MM-DD HH:MM:SS"
-            snprintf(start_date, sizeof(start_date), "%04d-%02d-%02d %02d:%02d:%02d",
-                    year, month, day, hour, min, sec);
-            period = received_period;
+    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    HAL_Delay(10);
 
-            // ИЗМЕРЯЕМ ТЕМПЕРАТУРУ ТЕРМОПАРЫ
-            thermocouple_temperature = Get_Thermocouple_Temperature();
+    SendMeasurementDataViaLoRa();
+    // После завершения всех операций отправляем COMPLETE
+    SendUARTResponse(COMPLETE_STRING);
 
-            // ВЫЧИСЛЯЕМ ТОЛЩИНУ (если еще не вычислена)
-            if (thickness_value == 0.0f && parameters_initialized) {
-                // Запускаем расчет толщины
-                calculate_thickness_requested = true;
-
-                // Ждем завершения расчета
-                uint32_t start_time = HAL_GetTick();
-                while (calculate_thickness_requested && (HAL_GetTick() - start_time) < 5000) {
-                    // Обрабатываем данные
-                    if (calculate_thickness_requested) {
-                        calculate_thickness_requested = false;
-                        ProcessDataByMethod();
-                    }
-                    HAL_Delay(10);
-                }
-            }
-
-            // ОТПРАВЛЯЕМ РАСШИРЕННЫЕ ДАННЫЕ ПО USB
-            if(thermocouple_error) {
-                snprintf(usb_msg, sizeof(usb_msg),
-                        "%s|%lu|%.4f|ERROR|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
-                        start_date, period, received_voltage, thickness_value,
-                        params.wave_speed, params.threshold, params.threshold_zero_crossing,
-                        params.start_index, params.probe_length, params.first_left_strobe,
-                        params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
-                        params.method, params.end_index, params.cycle_number, params.sensor_number,
-                        params.gain, start_date, period);
-            } else {
-                snprintf(usb_msg, sizeof(usb_msg),
-                        "%s|%lu|%.4f|%.2f|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
-                        start_date, period, received_voltage, thermocouple_temperature, thickness_value,
-                        params.wave_speed, params.threshold, params.threshold_zero_crossing,
-                        params.start_index, params.probe_length, params.first_left_strobe,
-                        params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
-                        params.method, params.end_index, params.cycle_number, params.sensor_number,
-                        params.gain, start_date, period);
-            }
-
-            CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
-            HAL_Delay(10);
-
-            SendUSBDebugMessage("Extended data sent via USB");
-            HAL_Delay(10);
-            SendTestDataViaLoRa();
-            HAL_Delay(10);
-            SendUSBDebugMessage("LoRa data sent after USB transmission");
-            HAL_Delay(10);
+}
+/**
+  * @brief Отправка данных измерений через LoRa
+  */
+void SendMeasurementDataViaLoRa(void) {
+    // Проверяем инициализацию LoRa
+    if (!lora_initialized) {
+        if (!InitializeLoRa()) {
+            SendUSBDebugMessage("LoRa initialization failed for measurement data send");
+            return;
         }
     }
-    // Старый формат (только дата, время и период)
-    else if(date_ptr && time_ptr && period_ptr) {
-        int year, month, day, hour, min, sec;
-        uint32_t received_period;
 
-        // Парсим дату и время
-        if(sscanf(date_ptr, "DATE:%d-%d-%d", &year, &month, &day) == 3 &&
-           sscanf(time_ptr, ";TIME:%d:%d:%d", &hour, &min, &sec) == 3 &&
-           sscanf(period_ptr, ";PERIOD:%lu", &received_period) == 1) {
+    // Формируем данные для отправки
+    uint8_t lora_data[128] = {0};
+    uint8_t data_index = 0;
 
-            // Формируем строку даты в формате "YYYY-MM-DD HH:MM:SS"
-            snprintf(start_date, sizeof(start_date), "%04d-%02d-%02d %02d:%02d:%02d",
-                    year, month, day, hour, min, sec);
-            period = received_period;
+    // Добавляем period (4 байта) - временная переменная
+    memcpy(&lora_data[data_index], &period, sizeof(uint32_t));
+    data_index += sizeof(uint32_t);
 
-            // ИЗМЕРЯЕМ ТЕМПЕРАТУРУ ТЕРМОПАРЫ
-            thermocouple_temperature = Get_Thermocouple_Temperature();
+    // Добавляем received_voltage (4 байта) - из ProcessUARTCommand
+    float voltage = received_voltage;
+    memcpy(&lora_data[data_index], &voltage, sizeof(float));
+    data_index += sizeof(float);
 
-            // ВЫЧИСЛЯЕМ ТОЛЩИНУ (если еще не вычислена)
-            if (thickness_value == 0.0f && parameters_initialized) {
-                // Запускаем расчет толщины
-                calculate_thickness_requested = true;
+    // Добавляем received_temp (4 байта) - из ProcessUARTCommand
+    float temp = received_temp;
+    memcpy(&lora_data[data_index], &temp, sizeof(float));
+    data_index += sizeof(float);
 
-                // Ждем завершения расчета
-                uint32_t start_time = HAL_GetTick();
-                while (calculate_thickness_requested && (HAL_GetTick() - start_time) < 5000) {
-                    // Обрабатываем данные
-                    if (calculate_thickness_requested) {
-                        calculate_thickness_requested = false;
-                        ProcessDataByMethod();
-                    }
-                    HAL_Delay(10);
-                }
-            }
+    // Добавляем thermocouple_temperature (4 байта) - глобальная переменная
+    memcpy(&lora_data[data_index], &thermocouple_temperature, sizeof(float));
+    data_index += sizeof(float);
 
-            // ОТПРАВЛЯЕМ РАСШИРЕННЫЕ ДАННЫЕ ПО USB
-            if(thermocouple_error) {
-                snprintf(usb_msg, sizeof(usb_msg),
-                        "%s|%lu|ERROR|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
-                        start_date, period, thickness_value,
-                        params.wave_speed, params.threshold, params.threshold_zero_crossing,
-                        params.start_index, params.probe_length, params.first_left_strobe,
-                        params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
-                        params.method, params.end_index, params.cycle_number, params.sensor_number,
-                        params.gain, start_date, period);
-            } else {
-                snprintf(usb_msg, sizeof(usb_msg),
-                        "%s|%lu|%.2f|%.3f|%.1f|%.1f|%.1f|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%lu|%s|%.1f|%s|%lu\r\n",
-                        start_date, period, thermocouple_temperature, thickness_value,
-                        params.wave_speed, params.threshold, params.threshold_zero_crossing,
-                        params.start_index, params.probe_length, params.first_left_strobe,
-                        params.first_right_strobe, params.second_left_strobe, params.second_right_strobe,
-                        params.method, params.end_index, params.cycle_number, params.sensor_number,
-                        params.gain, start_date, period);
-            }
+    // Добавляем thickness_value (4 байта) - расчетная переменная
+    memcpy(&lora_data[data_index], &thickness_value, sizeof(float));
+    data_index += sizeof(float);
 
-            CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
-            HAL_Delay(10);
+    // Добавляем wave_speed (4 байта) - из параметров
+    float wave_speed = params.wave_speed;
+    memcpy(&lora_data[data_index], &wave_speed, sizeof(float));
+    data_index += sizeof(float);
 
-            SendUSBDebugMessage("Extended data sent via USB");
-            HAL_Delay(10);
-            SendTestDataViaLoRa();
-            HAL_Delay(10);
-            SendUSBDebugMessage("LoRa data sent after USB transmission");
-            HAL_Delay(10);
-        }
+    // Добавляем threshold (4 байта) - из параметров
+    float threshold = params.threshold;
+    memcpy(&lora_data[data_index], &threshold, sizeof(float));
+    data_index += sizeof(float);
+
+    // Добавляем threshold_zero_crossing (4 байта) - из параметров
+    float threshold_zero = params.threshold_zero_crossing;
+    memcpy(&lora_data[data_index], &threshold_zero, sizeof(float));
+    data_index += sizeof(float);
+
+    // Добавляем start_index (4 байта) - из параметров
+    uint32_t start_idx = params.start_index;
+    memcpy(&lora_data[data_index], &start_idx, sizeof(uint32_t));
+    data_index += sizeof(uint32_t);
+
+    // Добавляем probe_length (4 байта) - из параметров
+    uint32_t probe_len = params.probe_length;
+    memcpy(&lora_data[data_index], &probe_len, sizeof(uint32_t));
+    data_index += sizeof(uint32_t);
+
+    // Добавляем first_left_strobe (4 байта) - из параметров
+    uint32_t strobe_l1 = params.first_left_strobe;
+    memcpy(&lora_data[data_index], &strobe_l1, sizeof(uint32_t));
+    data_index += sizeof(uint32_t);
+
+    // Добавляем first_right_strobe (4 байта) - из параметров
+    uint32_t strobe_r1 = params.first_right_strobe;
+    memcpy(&lora_data[data_index], &strobe_r1, sizeof(uint32_t));
+    data_index += sizeof(uint32_t);
+
+    // Добавляем second_left_strobe (4 байта) - из параметров
+    uint32_t strobe_l2 = params.second_left_strobe;
+    memcpy(&lora_data[data_index], &strobe_l2, sizeof(uint32_t));
+    data_index += sizeof(uint32_t);
+
+    // Добавляем second_right_strobe (4 байта) - из параметров
+    uint32_t strobe_r2 = params.second_right_strobe;
+    memcpy(&lora_data[data_index], &strobe_r2, sizeof(uint32_t));
+    data_index += sizeof(uint32_t);
+
+    // Добавляем method (4 байта) - из параметров
+    uint32_t method = params.method;
+    memcpy(&lora_data[data_index], &method, sizeof(uint32_t));
+    data_index += sizeof(uint32_t);
+
+    // Добавляем end_index (4 байта) - из параметров
+    uint32_t end_idx = params.end_index;
+    memcpy(&lora_data[data_index], &end_idx, sizeof(uint32_t));
+    data_index += sizeof(uint32_t);
+
+    // Добавляем cycle_number (4 байта) - из параметров
+    uint32_t cycle_num = params.cycle_number;
+    memcpy(&lora_data[data_index], &cycle_num, sizeof(uint32_t));
+    data_index += sizeof(uint32_t);
+
+    // Добавляем sensor_number (максимум 16 байт) - из параметров
+    uint8_t sensor_len = strlen(params.sensor_number);
+    if (sensor_len > 15) sensor_len = 15;
+    lora_data[data_index++] = sensor_len;
+    memcpy(&lora_data[data_index], params.sensor_number, sensor_len);
+    data_index += sensor_len;
+
+    // Добавляем gain (4 байта) - из параметров
+    float gain = params.gain;
+    memcpy(&lora_data[data_index], &gain, sizeof(float));
+    data_index += sizeof(float);
+
+    // Общая длина данных
+    uint8_t total_length = data_index;
+
+    // Настройка параметров передачи LoRa
+    sx126x_set_tx_params(&radio, pa_power, SX126X_RAMP_200_US);
+
+    // Ожидаем, пока модуль освободится
+    while (HAL_GPIO_ReadPin(sx1262_busy_port, sx1262_busy_pin) == GPIO_PIN_SET) {
+        HAL_Delay(1);
+    }
+
+    // Записываем данные в буфер модуля LoRa
+    sx126x_status_t status = sx126x_write_buffer(&radio, 0, lora_data, total_length);
+    if (status != SX126X_STATUS_OK) {
+        SendUSBDebugMessage("LoRa write buffer failed for measurement data");
+        return;
+    }
+
+    // Обновляем параметры пакета с актуальной длиной
+    pkt_params.pld_len_in_bytes = total_length;
+    status = sx126x_set_lora_pkt_params(&radio, &pkt_params);
+    if (status != SX126X_STATUS_OK) {
+        SendUSBDebugMessage("LoRa set packet params failed");
+        return;
+    }
+
+    // Запускаем передачу
+    status = sx126x_set_tx(&radio, SX126X_MAX_TIMEOUT_IN_MS);
+    if (status != SX126X_STATUS_OK) {
+        SendUSBDebugMessage("LoRa transmission failed for measurement data");
+    } else {
+        snprintf(usb_msg, sizeof(usb_msg), "LoRa measurement data sent (%d bytes)", total_length);
+        SendUSBDebugMessage(usb_msg);
     }
 }
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
     if(huart->Instance == USART1) {
         uart_last_rx_time = HAL_GetTick();
 
@@ -537,10 +547,13 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 
             uart_rx_pos = 0;
             memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
+
+            // Немедленно запускаем прием следующего байта
+            HAL_UART_Receive_IT(&huart1, (uint8_t*)uart_rx_buf, 1);
         } else {
             uart_rx_pos++;
+            HAL_UART_Receive_IT(&huart1, (uint8_t*)&uart_rx_buf[uart_rx_pos], 1);
         }
-        HAL_UART_Receive_IT(&huart1, (uint8_t*)&uart_rx_buf[uart_rx_pos], 1);
     }
 }
 
@@ -565,7 +578,7 @@ bool InitializeLoRa(void) {
 
     pkt_params.preamble_len_in_symb = 12;
     pkt_params.header_type = SX126X_LORA_PKT_EXPLICIT;
-    pkt_params.pld_len_in_bytes = 64;
+    pkt_params.pld_len_in_bytes = 128;
     pkt_params.crc_is_on = false;
     pkt_params.invert_iq_is_on = false;
 
@@ -666,6 +679,17 @@ void SendTestDataViaLoRa(void) {
         SendUSBDebugMessage("LoRa test data sent successfully");
     }
 }
+
+
+
+/**
+  * @brief Отправка ответа по UART
+  */
+void SendUARTResponse(const char* response)
+{
+    HAL_UART_Transmit(&huart1, (uint8_t*)response, strlen(response), 100);
+    HAL_Delay(10);
+}
 /* USER CODE END 0 */
 
 /**
@@ -720,135 +744,12 @@ int main(void)
 	  /* Infinite loop */
 	  /* USER CODE BEGIN WHILE */
 	  while (1) {
-	      static uint32_t last_lora_send_time = 0;
-	      uint32_t current_time = HAL_GetTick();
 
-	      // Отправка данных через LoRa каждые 5 секунд
-	      if (current_time - last_lora_send_time >= 5000) {
-	          last_lora_send_time = current_time;
 
-	          // Проверяем инициализацию LoRa
-	          if (!lora_initialized) {
-	              if (!InitializeLoRa()) {
-	                  SendUSBDebugMessage("LoRa initialization failed for periodic send");
-	                  continue;
-	              }
-	          }
-
-	          // Формируем данные для отправки (ТОЛЬКО из Flash памяти!)
-	          uint8_t lora_data[64] = {0};
-	          uint8_t data_index = 0;
-
-	          // Добавляем wave_speed (4 байта)
-	          float wave_speed = params.wave_speed;
-	          memcpy(&lora_data[data_index], &wave_speed, sizeof(float));
-	          data_index += sizeof(float);
-
-	          // Добавляем threshold (4 байта)
-	          float threshold = params.threshold;
-	          memcpy(&lora_data[data_index], &threshold, sizeof(float));
-	          data_index += sizeof(float);
-
-	          // Добавляем threshold_zero_crossing (4 байта)
-	          float threshold_zero = params.threshold_zero_crossing;
-	          memcpy(&lora_data[data_index], &threshold_zero, sizeof(float));
-	          data_index += sizeof(float);
-
-	          // Добавляем start_index (4 байта)
-	          uint32_t start_idx = params.start_index;
-	          memcpy(&lora_data[data_index], &start_idx, sizeof(uint32_t));
-	          data_index += sizeof(uint32_t);
-
-	          // Добавляем probe_length (4 байта)
-	          uint32_t probe_len = params.probe_length;
-	          memcpy(&lora_data[data_index], &probe_len, sizeof(uint32_t));
-	          data_index += sizeof(uint32_t);
-
-	          // Добавляем strobe_left1 (4 байта)
-	          uint32_t strobe_l1 = params.first_left_strobe;
-	          memcpy(&lora_data[data_index], &strobe_l1, sizeof(uint32_t));
-	          data_index += sizeof(uint32_t);
-
-	          // Добавляем strobe_right1 (4 байта)
-	          uint32_t strobe_r1 = params.first_right_strobe;
-	          memcpy(&lora_data[data_index], &strobe_r1, sizeof(uint32_t));
-	          data_index += sizeof(uint32_t);
-
-	          // Добавляем strobe_left2 (4 байта)
-	          uint32_t strobe_l2 = params.second_left_strobe;
-	          memcpy(&lora_data[data_index], &strobe_l2, sizeof(uint32_t));
-	          data_index += sizeof(uint32_t);
-
-	          // Добавляем strobe_right2 (4 байта)
-	          uint32_t strobe_r2 = params.second_right_strobe;
-	          memcpy(&lora_data[data_index], &strobe_r2, sizeof(uint32_t));
-	          data_index += sizeof(uint32_t);
-
-	          // Добавляем method (4 байта)
-	          uint32_t method = params.method;
-	          memcpy(&lora_data[data_index], &method, sizeof(uint32_t));
-	          data_index += sizeof(uint32_t);
-
-	          // Добавляем end_index (4 байта)
-	          uint32_t end_idx = params.end_index;
-	          memcpy(&lora_data[data_index], &end_idx, sizeof(uint32_t));
-	          data_index += sizeof(uint32_t);
-
-	          // Добавляем cycle_number (4 байта)
-	          uint32_t cycle_num = params.cycle_number;
-	          memcpy(&lora_data[data_index], &cycle_num, sizeof(uint32_t));
-	          data_index += sizeof(uint32_t);
-
-	          // Добавляем gain (4 байта)
-	          float gain = params.gain;
-	          memcpy(&lora_data[data_index], &gain, sizeof(float));
-	          data_index += sizeof(float);
-
-	          // Добавляем sensor_number (максимум 16 байт)
-	          uint8_t sensor_len = strlen(params.sensor_number);
-	          if (sensor_len > 15) sensor_len = 15;
-	          lora_data[data_index++] = sensor_len;
-	          memcpy(&lora_data[data_index], params.sensor_number, sensor_len);
-	          data_index += sensor_len;
-
-	          // Общая длина данных
-	          uint8_t total_length = data_index;
-
-	          // Настройка параметров передачи LoRa
-	          sx126x_set_tx_params(&radio, pa_power, SX126X_RAMP_200_US);
-
-	          // Ожидаем, пока модуль освободится
-	          while (HAL_GPIO_ReadPin(sx1262_busy_port, sx1262_busy_pin) == GPIO_PIN_SET) {
-	              HAL_Delay(1);
-	          }
-
-	          // Записываем данные в буфер модуля LoRa
-	          sx126x_status_t status = sx126x_write_buffer(&radio, 0, lora_data, total_length);
-	          if (status != SX126X_STATUS_OK) {
-	              SendUSBDebugMessage("LoRa write buffer failed in periodic send");
-	              continue;
-	          }
-
-	          // Обновляем параметры пакета с актуальной длиной
-	          pkt_params.pld_len_in_bytes = total_length;
-	          status = sx126x_set_lora_pkt_params(&radio, &pkt_params);
-	          if (status != SX126X_STATUS_OK) {
-	              SendUSBDebugMessage("LoRa set packet params failed");
-	              continue;
-	          }
-
-	          // Запускаем передачу
-	          status = sx126x_set_tx(&radio, SX126X_MAX_TIMEOUT_IN_MS);
-	          if (status != SX126X_STATUS_OK) {
-	              SendUSBDebugMessage("LoRa transmission failed in periodic send");
-	          } else {
-	              snprintf(usb_msg, sizeof(usb_msg), "LoRa periodic data sent (%d bytes)", total_length);
-	              SendUSBDebugMessage(usb_msg);
-	          }
-	      }
-
-	      // Работаем всегда, независимо от USB
 	      if (new_data_received) {
+
+	          uart_message_received = 0;
+
 	          if (strncmp((char*)usb_rx_buffer, "SETPARAMS=", 10) == 0) {
 	              ParseParameters((char*)usb_rx_buffer + 10);
 	              SendParametersResponse();
@@ -870,6 +771,8 @@ int main(void)
 
 	      // Обработка UART от дежурного МК
 	      if(uart_message_received) {
+
+
 	          uart_message_received = 0;
 	          ProcessUARTCommand((uint8_t*)uart_rx_data, uart_rx_len);
 	      }
@@ -888,7 +791,6 @@ int main(void)
     /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
 }
-
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -1103,10 +1005,10 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
@@ -1117,11 +1019,17 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12|GPIO_PIN_8|GPIO_PIN_9, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10
-                          |GPIO_PIN_11, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9
+                          |GPIO_PIN_10|GPIO_PIN_11, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : PE2 PE1 */
+  GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_1;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PA5 PA15 */
   GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_15;
@@ -1143,10 +1051,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PC7 PC8 PC9 PC10
-                           PC11 */
-  GPIO_InitStruct.Pin = GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10
-                          |GPIO_PIN_11;
+  /*Configure GPIO pins : PC6 PC7 PC8 PC9
+                           PC10 PC11 */
+  GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9
+                          |GPIO_PIN_10|GPIO_PIN_11;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
