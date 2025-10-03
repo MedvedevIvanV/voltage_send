@@ -6,7 +6,7 @@
 #include <stdbool.h>
 
 // Определения размеров
-#define FINAL_DATA_SIZE 10000
+#define FINAL_DATA_SIZE 5000
 #define DATA_VALUES_COUNT 4600
 
 // Структура для хранения параметров

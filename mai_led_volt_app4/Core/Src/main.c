@@ -29,7 +29,7 @@
 /* USER CODE BEGIN PD */
 #define START_PULSE_DURATION_NS 200   // Длительность стартового импульса в наносекундах
 #define USB_RX_BUFFER_SIZE 300
-#define FINAL_DATA_SIZE 10000
+#define FINAL_DATA_SIZE 5000
 #define UART_RX_TIMEOUT_MS 100
 
 // LoRa module pins
@@ -51,6 +51,9 @@
 // Добавить новые определения
 #define ACK_STRING           "ACK\r\n"
 #define COMPLETE_STRING      "COMPLETE\r\n"
+
+#define DATA_SIZE 8000       // Количество значений в ПЛИС
+#define VALUES_PER_LINE 10            // Количество значений в строке вывода
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -107,6 +110,17 @@ uint32_t lora_last_send_time = 0;  // Добавьте эту переменну
 // Переменные для данных от дежурного МК
 float received_voltage = 0.0f;
 float received_temp = 0.0f;
+
+
+typedef struct {
+    uint16_t data[DATA_SIZE]; // Буфер для хранения данных от ПЛИС
+    bool data_ready;                  // Флаг готовности данных
+    uint8_t data_count;               // Количество считанных данных
+} FPGA_Data;
+
+FPGA_Data fpga_data;                 // Структура для хранения данных ПЛИС
+volatile uint16_t *fpga_reg;         // Указатель на регистр ПЛИС
+#define FPGA_BASE_ADDRESS 0x60000000  // Базовый адрес Bank1 (NE1)
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -129,6 +143,8 @@ bool InitializeLoRa(void);
 void SendTestDataViaLoRa(void);
 // Добавить прототип
 void SendUARTResponse(const char* response);
+void ReadFPGAData(void);
+void PrintDataToUSB(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -160,13 +176,13 @@ void GenerateStartPulse(void) {
     // Устанавливаем низкий уровень на PD6
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_RESET);
 
-    // Загружаем параметры из памяти и запускаем расчет
-    if (!parameters_initialized) {
-        LoadParametersFromFlash();
-    }
-    calculate_thickness_requested = true;
-
-    SendUSBDebugMessage("Start pulse generated and calculation requested");
+//    // Загружаем параметры из памяти и запускаем расчет
+//    if (!parameters_initialized) {
+//        LoadParametersFromFlash();
+//    }
+//    calculate_thickness_requested = true;
+//
+//    SendUSBDebugMessage("Start pulse generated and calculation requested");
 }
 
 /**
@@ -176,7 +192,15 @@ void GenerateStartPulse(void) {
 void ProcessUSBCommand(uint8_t cmd) {
     switch(cmd) {
         case '1': // Стартовая команда
+        	SendUSBDebugMessage("LoRa test data sent successfully");
             GenerateStartPulse();
+            ReadFPGAData();
+
+            if (fpga_data.data_ready) {
+                SendUSBDebugMessage("Data received from FPGA:");
+                PrintDataToUSB();
+                fpga_data.data_ready = false;
+            }
             break;
 
         default:
@@ -316,8 +340,15 @@ void SendDateTimeToBackupMCU(void) {
   * @param len Длина данных
   */
 void ProcessUARTCommand(uint8_t* data, uint8_t len) {
-    // Немедленно отправляем ACK о получении данных
-    SendUARTResponse(ACK_STRING);
+    GenerateStartPulse();
+                ReadFPGAData();
+
+                if (fpga_data.data_ready) {
+                    SendUSBDebugMessage("Data received from FPGA:");
+                    PrintDataToUSB();
+                    fpga_data.data_ready = false;
+                }
+    HAL_Delay(10);
     // Поиск всех параметров в данных
     char* date_ptr = strstr((char*)data, "DATE:");
     char* time_ptr = strstr((char*)data, ";TIME:");
@@ -690,6 +721,58 @@ void SendUARTResponse(const char* response)
     HAL_UART_Transmit(&huart1, (uint8_t*)response, strlen(response), 100);
     HAL_Delay(10);
 }
+
+
+/**
+  * @brief Чтение данных из ПЛИС через FSMC интерфейс
+  */
+void ReadFPGAData(void) {
+    fpga_data.data_count = 0;
+    fpga_data.data_ready = false;
+
+    __disable_irq(); // Отключаем прерывания для атомарного чтения
+
+    for (int i = 0; i < DATA_SIZE; i++) {
+        // Читаем значение - ПЛИС автоматически переключает индекс при каждом чтении
+        uint16_t value = fpga_reg[0];
+        fpga_data.data[i] = value & 0x0FFF; // Извлекаем 12-битное значение
+        fpga_data.data_count++;
+
+        // Небольшая задержка между чтениями для стабильности
+        for(volatile int j = 0; j < 10; j++);
+    }
+
+    __enable_irq(); // Включаем прерывания обратно
+    fpga_data.data_ready = true;
+}
+
+/**
+  * @brief Вывод данных через USB CDC
+  */
+void PrintDataToUSB(void) {
+    if (!fpga_data.data_ready) return;
+
+    // Формируем заголовок
+    snprintf(usb_msg, sizeof(usb_msg), "FPGA Data [0-%d]:\r\n", DATA_SIZE-1);
+    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    HAL_Delay(10);
+
+    // Формируем строки с данными
+    char data_line[128] = ""; // Увеличим буфер для безопасности
+    for (int i = 0; i < DATA_SIZE; i++) {
+        char val_str[8];
+        snprintf(val_str, sizeof(val_str), "%4d ", fpga_data.data[i]);
+        strncat(data_line, val_str, sizeof(data_line) - strlen(data_line) - 1);
+
+        // Если строка заполнена или это последнее значение
+        if ((i+1) % VALUES_PER_LINE == 0 || i == DATA_SIZE-1) {
+            strncat(data_line, "\r\n", sizeof(data_line) - strlen(data_line) - 1);
+            CDC_Transmit_FS((uint8_t*)data_line, strlen(data_line));
+            HAL_Delay(10);
+            data_line[0] = '\0'; // Очищаем строку
+        }
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -698,39 +781,45 @@ void SendUARTResponse(const char* response)
   */
 int main(void)
 {
-	  /* USER CODE BEGIN 1 */
-	  /* USER CODE END 1 */
 
-	  /* MCU Configuration--------------------------------------------------------*/
+  /* USER CODE BEGIN 1 */
+  /* USER CODE END 1 */
 
-	  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-	  HAL_Init();
+  /* MCU Configuration--------------------------------------------------------*/
 
-	  /* USER CODE BEGIN Init */
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
 
-	  /* USER CODE END Init */
+  /* USER CODE BEGIN Init */
 
-	  /* Configure the system clock */
-	  SystemClock_Config();
+  /* USER CODE END Init */
 
-	  /* USER CODE BEGIN SysInit */
+  /* Configure the system clock */
+  SystemClock_Config();
 
-	  /* USER CODE END SysInit */
+  /* USER CODE BEGIN SysInit */
 
-	  /* Initialize all configured peripherals */
-	  MX_GPIO_Init();
-	  MX_USART1_UART_Init();
-	  MX_USB_DEVICE_Init();
-	  MX_DAC_Init();
-	  MX_TIM3_Init();
-	  MX_FSMC_Init();
-	  MX_SPI2_Init();
-	  /* USER CODE BEGIN 2 */
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_USART1_UART_Init();
+  MX_USB_DEVICE_Init();
+  MX_DAC_Init();
+  MX_TIM3_Init();
+  MX_FSMC_Init();
+  MX_SPI2_Init();
+  /* USER CODE BEGIN 2 */
 	  HAL_TIM_Base_Start(&htim3);
 	  srand(HAL_GetTick());
 
 	  HAL_UART_Receive_IT(&huart1, (uint8_t*)uart_rx_buf, 1);
 
+	  // Инициализация указателя на регистр ПЛИС
+	  fpga_reg = (volatile uint16_t *)FPGA_BASE_ADDRESS;
+
+	  // Инициализация структуры данных ПЛИС
+	  memset(&fpga_data, 0, sizeof(fpga_data));
 
 	  // Загружаем параметры из энергонезависимой памяти при старте
 	  HAL_Delay(1000);
@@ -739,10 +828,10 @@ int main(void)
 
 
 	  InitializeLoRa();
-	  /* USER CODE END 2 */
+  /* USER CODE END 2 */
 
-	  /* Infinite loop */
-	  /* USER CODE BEGIN WHILE */
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
 	  while (1) {
 
 
@@ -789,8 +878,10 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
   /* USER CODE END 3 */
 }
+
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -1013,7 +1104,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5|GPIO_PIN_15, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12|GPIO_PIN_8|GPIO_PIN_9, GPIO_PIN_RESET);
@@ -1031,8 +1122,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PA5 PA15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_15;
+  /*Configure GPIO pin : PA5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -1075,7 +1166,6 @@ static void MX_GPIO_Init(void)
 /* FSMC initialization function */
 static void MX_FSMC_Init(void)
 {
-
   /* USER CODE BEGIN FSMC_Init 0 */
 
   /* USER CODE END FSMC_Init 0 */
@@ -1092,26 +1182,26 @@ static void MX_FSMC_Init(void)
   hsram1.Extended = FSMC_NORSRAM_EXTENDED_DEVICE;
   /* hsram1.Init */
   hsram1.Init.NSBank = FSMC_NORSRAM_BANK1;
-  hsram1.Init.DataAddressMux = FSMC_DATA_ADDRESS_MUX_ENABLE;
+  hsram1.Init.DataAddressMux = FSMC_DATA_ADDRESS_MUX_DISABLE;
   hsram1.Init.MemoryType = FSMC_MEMORY_TYPE_PSRAM;
   hsram1.Init.MemoryDataWidth = FSMC_NORSRAM_MEM_BUS_WIDTH_16;
   hsram1.Init.BurstAccessMode = FSMC_BURST_ACCESS_MODE_DISABLE;
   hsram1.Init.WaitSignalPolarity = FSMC_WAIT_SIGNAL_POLARITY_LOW;
   hsram1.Init.WrapMode = FSMC_WRAP_MODE_DISABLE;
   hsram1.Init.WaitSignalActive = FSMC_WAIT_TIMING_BEFORE_WS;
-  hsram1.Init.WriteOperation = FSMC_WRITE_OPERATION_ENABLE;
+  hsram1.Init.WriteOperation = FSMC_WRITE_OPERATION_DISABLE;
   hsram1.Init.WaitSignal = FSMC_WAIT_SIGNAL_DISABLE;
   hsram1.Init.ExtendedMode = FSMC_EXTENDED_MODE_DISABLE;
   hsram1.Init.AsynchronousWait = FSMC_ASYNCHRONOUS_WAIT_DISABLE;
   hsram1.Init.WriteBurst = FSMC_WRITE_BURST_DISABLE;
   hsram1.Init.PageSize = FSMC_PAGE_SIZE_NONE;
   /* Timing */
-  Timing.AddressSetupTime = 15;
-  Timing.AddressHoldTime = 15;
-  Timing.DataSetupTime = 255;
-  Timing.BusTurnAroundDuration = 15;
-  Timing.CLKDivision = 16;
-  Timing.DataLatency = 17;
+  Timing.AddressSetupTime = 2;
+  Timing.AddressHoldTime = 1;
+  Timing.DataSetupTime =  5;
+  Timing.BusTurnAroundDuration = 1;
+  Timing.CLKDivision = 2;
+  Timing.DataLatency = 2;
   Timing.AccessMode = FSMC_ACCESS_MODE_A;
   /* ExtTiming */
 

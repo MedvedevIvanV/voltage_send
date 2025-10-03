@@ -63,6 +63,9 @@ volatile uint8_t wakeup_flag = 0;
 
 // Флаг для получения COMPLETE сообщения
 volatile uint8_t complete_received = 0;
+
+// ФЛАГ ДЛЯ ОПРЕДЕЛЕНИЯ ПОЛУЧЕНИЯ ПЕРИОДА ОТ ОСНОВНОГО МК
+volatile uint8_t period_received = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -244,6 +247,9 @@ static void process_uart_command(uint8_t* data, uint8_t len)
         strncpy(date_str, date_ptr + 5, 10); // "DATE:YYYY-MM-DD"
         strncpy(time_str, time_ptr + 6, 8);  // "TIME:HH:MM:SS"
 
+        // УСТАНАВЛИВАЕМ ФЛАГ, ЧТО ПЕРИОД ПОЛУЧЕН
+        period_received = 1;
+
         // Отправляем ответ с напряжением и температурой
         send_datetime_with_voltage_and_temp(date_str, time_str);
 
@@ -360,14 +366,17 @@ int main(void)
   // Инициализируем UART прием
   uart_last_rx_time = HAL_GetTick();
   HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
+
+  // СБРАСЫВАЕМ ФЛАГ ПОЛУЧЕНИЯ ПЕРИОДА ПРИ СТАРТЕ
+  period_received = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    // Проверяем флаг пробуждения от RTC
-    if(wakeup_flag)
+    // ГЛАВНОЕ ИЗМЕНЕНИЕ: Проверяем флаг пробуждения от RTC ТОЛЬКО если период уже получен
+    if(wakeup_flag && period_received)
     {
       // Сбрасываем флаг
       wakeup_flag = 0;
@@ -416,7 +425,7 @@ int main(void)
       enter_sleep_mode();
     }
 
-    // Обработка UART команд
+    // Обработка UART команд (работает всегда для получения периода)
     if(uart_cmd_ready) {
         uart_cmd_ready = 0;
         process_uart_command(uart_rx_buf, uart_rx_pos);
@@ -435,6 +444,7 @@ int main(void)
   }
   /* USER CODE END 3 */
 }
+
 
 // Остальной код без изменений (SystemClock_Config, MX_ADC1_Init, MX_LPUART1_UART_Init, MX_RTC_Init, MX_GPIO_Init, Error_Handler)
 
