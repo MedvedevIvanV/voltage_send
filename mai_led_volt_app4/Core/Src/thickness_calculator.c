@@ -14,19 +14,17 @@ bool calculate_thickness_requested = false;
 float thickness_value = 0.0f;
 float frequency_ns = 12.5e-9f;
 
-// Буферы данных (теперь определены здесь)
+// Буферы данных
 float32_t normalized_data[DATA_VALUES_COUNT] = {0};
 float32_t autocorrelation_result[DATA_VALUES_COUNT] = {0};
-float32_t temp_data[FINAL_DATA_SIZE] = {0};
 float32_t final_data[FINAL_DATA_SIZE] = {0};
-uint32_t successful_cycles = 0;
 
 // Внешние переменные
-extern const float measurement_data[];
+extern float averaged_fpga_data[DATA_SIZE];
+extern bool averaging_complete;
 
 // Вспомогательная функция для отправки сообщений
 void SendUSBDebugMessage(const char *message);
-
 
 /**
   * @brief Расчет CRC32 для проверки целостности данных
@@ -107,60 +105,17 @@ void InitializeParameters(void) {
 }
 
 /**
-  * @brief Добавление случайного шума и расширение массива до 10000 точек
+  * @brief Копирование данных без добавления шума и расширения
   */
-void AddRandomNoiseAndExtend(const float32_t* src, float32_t* dest, uint32_t dest_size) {
-    for (uint32_t i = 0; i < DATA_VALUES_COUNT; i++) {
-        float noise = (rand() % 100 - 50) / 100.0f;
-        dest[i] = src[i] + noise;
+void CopyDataWithoutModification(const float32_t* src, float32_t* dest, uint32_t dest_size) {
+    // Копируем только существующие данные, не увеличивая длину массива
+    uint32_t copy_size = (DATA_VALUES_COUNT < dest_size) ? DATA_VALUES_COUNT : dest_size;
+    arm_copy_f32(src, dest, copy_size);
+
+    // Остальные элементы заполняем нулями (если dest_size > DATA_VALUES_COUNT)
+    for (uint32_t i = copy_size; i < dest_size; i++) {
+        dest[i] = 0.0f;
     }
-
-    for (uint32_t i = DATA_VALUES_COUNT; i < dest_size; i++) {
-        dest[i] = (rand() % 2000 - 1000) / 10.0f;
-    }
-}
-
-/**
-  * @brief Проверка данных на превышение threshold
-  */
-bool CheckThreshold(const float32_t* data, uint32_t size) {
-    if (!parameters_initialized) {
-        SendUSBDebugMessage("Threshold parameter not initialized");
-        return false;
-    }
-
-    for (uint32_t i = 0; i < size; i++) {
-        if (fabsf(data[i]) > params.threshold) {
-            return false;
-        }
-    }
-    return true;
-}
-
-/**
-  * @brief Обработка одного цикла
-  */
-bool ProcessCycle(uint32_t cycle_num) {
-    AddRandomNoiseAndExtend(measurement_data, temp_data, FINAL_DATA_SIZE);
-
-    if (params.gain != 1.0f) {
-        arm_scale_f32(temp_data, params.gain, temp_data, FINAL_DATA_SIZE);
-    }
-
-    bool below_threshold = CheckThreshold(temp_data, FINAL_DATA_SIZE);
-
-    if (below_threshold) {
-        if (successful_cycles == 0) {
-            arm_copy_f32(temp_data, final_data, FINAL_DATA_SIZE);
-        } else {
-            for (uint32_t i = 0; i < FINAL_DATA_SIZE; i++) {
-                final_data[i] = (final_data[i] * successful_cycles + temp_data[i]) / (successful_cycles + 1);
-            }
-        }
-        successful_cycles++;
-    }
-
-    return below_threshold;
 }
 
 /**
@@ -329,20 +284,28 @@ void ProcessDataByMethod(void) {
         return;
     }
 
-    successful_cycles = 0;
-
-    for (uint32_t cycle = 1; cycle <= params.cycle_number; cycle++) {
-        ProcessCycle(cycle);
-        HAL_Delay(10);
-    }
-
-    if (successful_cycles == 0) {
-        SendUSBDebugMessage("No cycles passed threshold check");
+    // ПРОВЕРЯЕМ, ЧТО УСРЕДНЕНИЕ ЗАВЕРШЕНО И ИСПОЛЬЗУЕМ УСРЕДНЕННЫЙ МАССИВ FPGA
+    if (!averaging_complete) {
+        SendUSBDebugMessage("Averaging not complete, cannot calculate thickness");
+        thickness_value = 0.0f;
         return;
     }
 
+    // Копируем данные из усредненного массива FPGA
+    uint32_t copy_size = (DATA_SIZE < FINAL_DATA_SIZE) ? DATA_SIZE : FINAL_DATA_SIZE;
+    for (uint32_t i = 0; i < copy_size; i++) {
+        final_data[i] = averaged_fpga_data[i];
+    }
+
+    // Заполняем остаток нулями если необходимо
+    for (uint32_t i = copy_size; i < FINAL_DATA_SIZE; i++) {
+        final_data[i] = 0.0f;
+    }
+
+    // Обрабатываем данные в зависимости от выбранного метода
     switch (params.method) {
         case 0:
+            // Автокорреляционный метод
             arm_copy_f32(final_data, normalized_data, DATA_VALUES_COUNT);
             NormalizeData();
             CalculateAutocorrelation();
@@ -350,10 +313,12 @@ void ProcessDataByMethod(void) {
             break;
 
         case 1:
+            // Метод перехода через ноль
             CalculateZeroCrossingThickness(final_data);
             break;
 
         case 2:
+            // Метод стробов
             CalculateStrobeThickness(final_data);
             break;
 

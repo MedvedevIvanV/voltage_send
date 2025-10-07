@@ -35,7 +35,7 @@
 /* USER CODE BEGIN PD */
 #define UART_RX_BUF_SIZE       128
 #define UART_TIMEOUT_MS        100
-#define COMPLETE_TIMEOUT_MS    15000  // 15 секунд ожидания COMPLETE
+#define COMPLETE_TIMEOUT_MS    25000  // 15 секунд ожидания COMPLETE
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -386,7 +386,7 @@ int main(void)
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
 
       // Ждем 3 секунды после включения
-      HAL_Delay(3000);
+      HAL_Delay(5000);
 
       // Измеряем напряжение и температуру
       float voltage = read_voltage();

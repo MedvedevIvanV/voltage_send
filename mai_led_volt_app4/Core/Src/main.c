@@ -19,6 +19,8 @@
 #include "sx126x_hal.h"
 #include "thickness_calculator.h"
 #include "temperature_sensor.h"
+#include "adc_plis.h" // Файл с конфигурацией ПЛИС (массив uint8_t fpga_config[])
+#include "stm32f4xx_hal.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -52,7 +54,7 @@
 #define ACK_STRING           "ACK\r\n"
 #define COMPLETE_STRING      "COMPLETE\r\n"
 
-#define DATA_SIZE 8000       // Количество значений в ПЛИС
+#define DATA_SIZE 5000       // Количество значений в ПЛИС
 #define VALUES_PER_LINE 10            // Количество значений в строке вывода
 /* USER CODE END PD */
 
@@ -121,6 +123,11 @@ typedef struct {
 FPGA_Data fpga_data;                 // Структура для хранения данных ПЛИС
 volatile uint16_t *fpga_reg;         // Указатель на регистр ПЛИС
 #define FPGA_BASE_ADDRESS 0x60000000  // Базовый адрес Bank1 (NE1)
+
+
+uint16_t temp_fpga_buffer[DATA_SIZE];     // Временный буфер для чтения
+float averaged_fpga_data[DATA_SIZE];   // Итоговый усредненный массив
+bool averaging_complete = false;          // Флаг завершения усреднения
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -145,6 +152,9 @@ void SendTestDataViaLoRa(void);
 void SendUARTResponse(const char* response);
 void ReadFPGAData(void);
 void PrintDataToUSB(void);
+
+// ДОБАВИТЬ ЭТУ ФУНКЦИЮ
+bool CheckAndLoadFPGAConfig(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -186,21 +196,14 @@ void GenerateStartPulse(void) {
 }
 
 /**
-  * @brief Обработка команд от USB
+  * @brief Обработка команд от USB - не использовать!
   * @param cmd Полученная команда
   */
 void ProcessUSBCommand(uint8_t cmd) {
     switch(cmd) {
-        case '1': // Стартовая команда
-        	SendUSBDebugMessage("LoRa test data sent successfully");
-            GenerateStartPulse();
-            ReadFPGAData();
-
-            if (fpga_data.data_ready) {
-                SendUSBDebugMessage("Data received from FPGA:");
-                PrintDataToUSB();
-                fpga_data.data_ready = false;
-            }
+        case '1':
+            // Команда 1
+               SendUSBDebugMessage("Unknown command received 1");
             break;
 
         default:
@@ -340,15 +343,27 @@ void SendDateTimeToBackupMCU(void) {
   * @param len Длина данных
   */
 void ProcessUARTCommand(uint8_t* data, uint8_t len) {
-    GenerateStartPulse();
-                ReadFPGAData();
+	ReadFPGAData(); // Теперь эта функция делает все: START + многократное чтение + усреднение
 
-                if (fpga_data.data_ready) {
-                    SendUSBDebugMessage("Data received from FPGA:");
-                    PrintDataToUSB();
-                    fpga_data.data_ready = false;
-                }
-    HAL_Delay(10);
+	    if (fpga_data.data_ready) {
+
+	        // СРАЗУ ВЫЧИСЛЯЕМ ТОЛЩИНУ ПО УСРЕДНЕННОМУ МАССИВУ
+	        if (parameters_initialized && averaging_complete) {
+	            calculate_thickness_requested = true;
+
+	            uint32_t start_time = HAL_GetTick();
+	            while (calculate_thickness_requested && (HAL_GetTick() - start_time) < 5000) {
+	                if (calculate_thickness_requested) {
+	                    calculate_thickness_requested = false;
+	                    ProcessDataByMethod(); // Теперь использует averaged_fpga_data
+	                }
+	                HAL_Delay(10);
+	            }
+	        }
+	        SendUSBDebugMessage("Averaged data received from FPGA:");
+	        PrintDataToUSB();
+	        fpga_data.data_ready = false;
+	    }
     // Поиск всех параметров в данных
     char* date_ptr = strstr((char*)data, "DATE:");
     char* time_ptr = strstr((char*)data, ";TIME:");
@@ -723,45 +738,25 @@ void SendUARTResponse(const char* response)
 }
 
 
-/**
-  * @brief Чтение данных из ПЛИС через FSMC интерфейс
-  */
-void ReadFPGAData(void) {
-    fpga_data.data_count = 0;
-    fpga_data.data_ready = false;
 
-    __disable_irq(); // Отключаем прерывания для атомарного чтения
-
-    for (int i = 0; i < DATA_SIZE; i++) {
-        // Читаем значение - ПЛИС автоматически переключает индекс при каждом чтении
-        uint16_t value = fpga_reg[0];
-        fpga_data.data[i] = value & 0x0FFF; // Извлекаем 12-битное значение
-        fpga_data.data_count++;
-
-        // Небольшая задержка между чтениями для стабильности
-        for(volatile int j = 0; j < 10; j++);
-    }
-
-    __enable_irq(); // Включаем прерывания обратно
-    fpga_data.data_ready = true;
-}
 
 /**
-  * @brief Вывод данных через USB CDC
+  * @brief Вывод усредненных данных через USB CDC
   */
 void PrintDataToUSB(void) {
     if (!fpga_data.data_ready) return;
 
-    // Формируем заголовок
-    snprintf(usb_msg, sizeof(usb_msg), "FPGA Data [0-%d]:\r\n", DATA_SIZE-1);
+    // Формируем заголовок с информацией об усреднении
+    snprintf(usb_msg, sizeof(usb_msg), "Averaged FPGA Data [%lu cycles, 0-%d]:\r\n",
+             params.cycle_number, DATA_SIZE-1);
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
     HAL_Delay(10);
 
     // Формируем строки с данными
-    char data_line[128] = ""; // Увеличим буфер для безопасности
+    char data_line[128] = "";
     for (int i = 0; i < DATA_SIZE; i++) {
-        char val_str[8];
-        snprintf(val_str, sizeof(val_str), "%4d ", fpga_data.data[i]);
+        char val_str[12];
+        snprintf(val_str, sizeof(val_str), "%6.1f ", averaged_fpga_data[i]); // Форматирование для float
         strncat(data_line, val_str, sizeof(data_line) - strlen(data_line) - 1);
 
         // Если строка заполнена или это последнее значение
@@ -771,6 +766,198 @@ void PrintDataToUSB(void) {
             HAL_Delay(10);
             data_line[0] = '\0'; // Очищаем строку
         }
+    }
+}
+
+
+
+/**
+  * @brief Проверка и загрузка конфигурации ПЛИС при включении питания
+  * @return true если конфигурация успешно загружена, false в случае ошибки
+  */
+bool CheckAndLoadFPGAConfig(void) {
+    SendUSBDebugMessage("Checking FPGA configuration...");
+
+    // Получаем данные конфигурации из adc_plis.h
+    uint8_t *config_data = fpga_config;
+    uint32_t config_size = sizeof(fpga_config);
+
+    // Загружаем конфигурацию в ПЛИС
+    FPGA_SendConfig(config_data, config_size);
+
+    // Даем время ПЛИС на инициализацию
+    HAL_Delay(100);
+
+
+    SendUSBDebugMessage("FPGA configuration loaded successfully");
+    return true;
+}
+
+/**
+  * @brief Отправка конфигурации в ПЛИС
+  * @param config_data Указатель на данные конфигурации
+  * @param size Размер данных конфигурации
+  */
+void FPGA_SendConfig(uint8_t *config_data, uint32_t size) {
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    // 1. Настройка пинов для конфигурации
+    // PC11 - DATA (выход)
+    GPIO_InitStruct.Pin = GPIO_PIN_11;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+    // 2. Последовательность сброса ПЛИС
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);   // TH_CS = 1
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);   // CSO = 1
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET); // nCONFIG = 0
+    HAL_Delay(100); // Длительный сброс (100 мс)
+
+    // 3. Запуск конфигурации
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_RESET);  // CE = 0
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_SET);   // nCONFIG = 1
+    HAL_Delay(10); // Ожидание готовности ПЛИС
+
+    // 4. Отправка данных конфигурации
+    for (uint32_t i = 0; i < size; i++) {
+        uint8_t byte = config_data[i];
+        for (int bit = 0; bit < 8; bit++) {
+            // Установка бита данных (LSB first) на PC11
+            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, (byte & 0x01) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+            byte >>= 1;
+
+            // Тактовый импульс на PC10
+            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
+            __NOP(); __NOP(); __NOP(); __NOP();
+            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
+            __NOP(); __NOP();
+        }
+    }
+
+    // 5. Завершение конфигурации
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_SET);    // CE = 1
+    HAL_Delay(1);
+
+    // 6. Дополнительные тактовые импульсы
+    for (int i = 0; i < 8; i++) {
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
+        __NOP(); __NOP();
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
+        __NOP(); __NOP();
+    }
+
+    // 7. Возврат в исходное состояние
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);  // TH_CS = 0
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET);  // CSO = 0
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_RESET); // DATA = 0
+
+    SendUSBDebugMessage("FPGA configuration sequence completed");
+}
+
+
+
+
+
+/**
+  * @brief Многократное чтение и усреднение данных из ПЛИС с проверкой порога
+  */
+void ReadFPGAData(void) {
+    // Инициализация итогового массива нулями
+    memset(averaged_fpga_data, 0, sizeof(averaged_fpga_data));
+    averaging_complete = false;
+
+    // Получаем количество циклов из параметров
+    uint32_t cycles = params.cycle_number;
+    float threshold = params.threshold; // Получаем порог из параметров
+
+    if (cycles == 0) {
+        cycles = 1; // Минимум один цикл
+    }
+
+    snprintf(usb_msg, sizeof(usb_msg), "Starting %lu averaging cycles with threshold: %.1f", cycles, threshold);
+    SendUSBDebugMessage(usb_msg);
+
+    uint32_t valid_cycles = 0; // Счетчик валидных циклов (без превышения порога)
+
+    for (uint32_t cycle = 0; cycle < cycles; cycle++) {
+        // Генерируем START импульс для нового измерения
+        GenerateStartPulse();
+
+        // Ждем некоторое время для стабилизации ПЛИС
+        HAL_Delay(1);
+
+        bool threshold_exceeded = false; // Флаг превышения порога
+
+        // Читаем данные во временный буфер с проверкой порога
+        __disable_irq(); // Отключаем прерывания для атомарного чтения
+
+        for (int i = 0; i < DATA_SIZE; i++) {
+            // Читаем значение - ПЛИС автоматически переключает индекс при каждом чтении
+            uint16_t value = fpga_reg[0];
+            uint16_t raw_value = value & 0x0FFF - 2048; // Извлекаем 12-битное значение
+
+            // Проверяем порог (по модулю)
+            if (abs((int16_t)raw_value) > threshold) { // 2048 - среднее значение для 12-битного АЦП
+                threshold_exceeded = true;
+                __enable_irq(); // Включаем прерывания перед выходом
+                break; // Немедленно выходим из цикла чтения
+            }
+
+            temp_fpga_buffer[i] = raw_value;
+
+            // Небольшая задержка между чтениями для стабильности
+            for(volatile int j = 0; j < 10; j++);
+        }
+
+        __enable_irq(); // Включаем прерывания обратно
+
+        // Если порог превышен, пропускаем этот цикл
+        if (threshold_exceeded) {
+            snprintf(usb_msg, sizeof(usb_msg), "Cycle %lu skipped - threshold exceeded", cycle + 1);
+            SendUSBDebugMessage(usb_msg);
+            continue; // Переходим к следующей итерации цикла
+        }
+
+        // Усредняем данные только если цикл валидный
+        valid_cycles++;
+        for (int i = 0; i < DATA_SIZE; i++) {
+            // Первый валидный цикл - просто копируем, последующие - усредняем
+            if (valid_cycles == 1) {
+                averaged_fpga_data[i] = (float)temp_fpga_buffer[i];
+            } else {
+                // Усреднение: (предыдущее * циклы + новое) / (циклы + 1)
+                averaged_fpga_data[i] = (averaged_fpga_data[i] * (valid_cycles - 1) + (float)temp_fpga_buffer[i]) / valid_cycles;
+            }
+        }
+
+        // Опционально: отправляем прогресс по USB
+        if ((cycle + 1) % 10 == 0 || cycle == cycles - 1) {
+            snprintf(usb_msg, sizeof(usb_msg), "Averaging progress: %lu/%lu cycles, valid: %lu",
+                     cycle + 1, cycles, valid_cycles);
+            SendUSBDebugMessage(usb_msg);
+        }
+
+        // Небольшая пауза между циклами
+        HAL_Delay(10);
+    }
+
+    // Копируем усредненные данные в основную структуру только если есть валидные циклы
+    if (valid_cycles > 0) {
+        for (int i = 0; i < DATA_SIZE; i++) {
+            fpga_data.data[i] = (uint16_t)averaged_fpga_data[i]; // Приводим к uint16_t для обратной совместимости
+        }
+        fpga_data.data_count = DATA_SIZE;
+        fpga_data.data_ready = true;
+        averaging_complete = true;
+
+        snprintf(usb_msg, sizeof(usb_msg), "Averaging completed: %lu valid cycles out of %lu", valid_cycles, cycles);
+        SendUSBDebugMessage(usb_msg);
+    } else {
+        fpga_data.data_ready = false;
+        averaging_complete = false;
+        SendUSBDebugMessage("Averaging failed: no valid cycles (all exceeded threshold)");
     }
 }
 /* USER CODE END 0 */
@@ -810,6 +997,14 @@ int main(void)
   MX_FSMC_Init();
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
+
+  // ЗАГРУЖАЕМ КОНФИГУРАЦИЮ ПЛИС ПРИ КАЖДОМ ВКЛЮЧЕНИИ ПИТАНИЯ
+  if (!CheckAndLoadFPGAConfig()) {
+      SendUSBDebugMessage("ERROR: FPGA configuration failed!");
+      // Здесь можно добавить обработку ошибки, например, мигание светодиодом
+  } else {
+      SendUSBDebugMessage("FPGA configured successfully");
+  }
 	  HAL_TIM_Base_Start(&htim3);
 	  srand(HAL_GetTick());
 
@@ -881,7 +1076,6 @@ int main(void)
 
   /* USER CODE END 3 */
 }
-
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -1104,7 +1298,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5|GPIO_PIN_15, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12|GPIO_PIN_8|GPIO_PIN_9, GPIO_PIN_RESET);
@@ -1122,8 +1316,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  /*Configure GPIO pins : PA5 PA15 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_15;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;

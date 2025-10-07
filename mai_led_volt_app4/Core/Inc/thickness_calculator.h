@@ -8,6 +8,8 @@
 // Определения размеров
 #define FINAL_DATA_SIZE 5000
 #define DATA_VALUES_COUNT 4600
+#define DATA_SIZE 5000
+
 
 // Структура для хранения параметров
 typedef struct {
@@ -34,7 +36,8 @@ extern bool parameters_initialized;
 extern bool calculate_thickness_requested;
 extern float thickness_value;
 extern float frequency_ns;
-
+extern float averaged_fpga_data[DATA_SIZE];
+extern bool averaging_complete;
 // Буферы данных
 extern float32_t normalized_data[DATA_VALUES_COUNT];
 extern float32_t autocorrelation_result[DATA_VALUES_COUNT];
