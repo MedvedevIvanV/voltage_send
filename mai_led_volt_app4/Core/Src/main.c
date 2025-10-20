@@ -152,9 +152,6 @@ void SendTestDataViaLoRa(void);
 void SendUARTResponse(const char* response);
 void ReadFPGAData(void);
 void PrintDataToUSB(void);
-
-// ДОБАВИТЬ ЭТУ ФУНКЦИЮ
-bool CheckAndLoadFPGAConfig(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -186,13 +183,6 @@ void GenerateStartPulse(void) {
     // Устанавливаем низкий уровень на PD6
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_RESET);
 
-//    // Загружаем параметры из памяти и запускаем расчет
-//    if (!parameters_initialized) {
-//        LoadParametersFromFlash();
-//    }
-//    calculate_thickness_requested = true;
-//
-//    SendUSBDebugMessage("Start pulse generated and calculation requested");
 }
 
 /**
@@ -203,12 +193,12 @@ void ProcessUSBCommand(uint8_t cmd) {
     switch(cmd) {
         case '1':
             // Команда 1
-               SendUSBDebugMessage("Unknown command received 1");
+              // SendUSBDebugMessage("Unknown command received 1");
             break;
 
         default:
             // Неизвестная команда
-            SendUSBDebugMessage("Unknown command received");
+          //  SendUSBDebugMessage("Unknown command received");
             break;
     }
 }
@@ -270,12 +260,12 @@ void ParseParameters(const char* params_str) {
                 // Сохраняем start_date во временную переменную (НЕ во Flash)
                 strncpy(start_date, param_value, sizeof(start_date) - 1);
                 start_date[sizeof(start_date) - 1] = '\0';
-                SendUSBDebugMessage("Start date parsed (not saved to Flash)");
+              //  SendUSBDebugMessage("Start date parsed (not saved to Flash)");
             } else if (strcmp(param_name, "period") == 0) {
                 // Сохраняем period во временную переменную (НЕ во Flash)
                 period = atoi(param_value);
                 snprintf(usb_msg, sizeof(usb_msg), "Period parsed: %lu (not saved to Flash)", period);
-                SendUSBDebugMessage(usb_msg);
+               // SendUSBDebugMessage(usb_msg);
             }
         }
         token = strtok(NULL, "|");
@@ -289,7 +279,7 @@ void ParseParameters(const char* params_str) {
 
     // Устанавливаем флаг для запуска расчета
     calculate_thickness_requested = true;
-    SendUSBDebugMessage("Parameters parsed and saved successfully - calculation requested");
+  //  SendUSBDebugMessage("Parameters parsed and saved successfully - calculation requested");
 }
 
 /**
@@ -297,19 +287,19 @@ void ParseParameters(const char* params_str) {
   */
 void SendParametersResponse(void) {
     if (!parameters_initialized) {
-        SendUSBDebugMessage("Parameters not initialized yet");
+      //  SendUSBDebugMessage("Parameters not initialized yet");
         return;
     }
-
+    uint8_t usb_status = USB_CONNECTED();
     snprintf(usb_msg, sizeof(usb_msg),
         "wave_speed=%.1f|threshold=%.1f|threshold_zero_crossing=%.1f|"
         "start_index=%lu|probe_length=%lu|strobe_left1=%lu|strobe_right1=%lu|"
         "strobe_left2=%lu|strobe_right2=%lu|method=%lu|end_index=%lu|cycle_number=%lu|"
-        "sensor_number=%s|gain=%.1f|start_date=%s|period=%lu\r\n",
+        "sensor_number=%s|gain=%.1f|start_date=%s|period=%lu;USB:%u\r\n",
         params.wave_speed, params.threshold, params.threshold_zero_crossing,
         params.start_index, params.probe_length, params.first_left_strobe, params.first_right_strobe,
         params.second_left_strobe, params.second_right_strobe, params.method, params.end_index, params.cycle_number,
-        params.sensor_number, params.gain, start_date, period);
+        params.sensor_number, params.gain, start_date, period, usb_status);
 
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
     HAL_Delay(10);
@@ -318,22 +308,26 @@ void SendParametersResponse(void) {
 /**
   * @brief Отправка даты/времени и периода на дежурный МК по UART
   */
+// Функция отправки данных
 void SendDateTimeToBackupMCU(void) {
     // Проверяем что данные не пустые
     if (strlen(start_date) > 0 && period > 0) {
-        // Формируем сообщение в формате: "DATE:YYYY-MM-DD;TIME:HH:MM:SS;PERIOD:XXXXX"
+        // Получаем статус USB подключения
+        uint8_t usb_status = USB_CONNECTED();
+
+        // Формируем сообщение в формате: "DATE:YYYY-MM-DD;TIME:HH:MM:SS;PERIOD:XXXXX;USB:X"
         snprintf(uart_tx_buf, UART_TX_BUF_SIZE,
-                 "DATE:%.10s;TIME:%.8s;PERIOD:%lu\r\n",
-                 start_date, start_date + 11, period);
+                 "DATE:%.10s;TIME:%.8s;PERIOD:%lu;USB:%u\r\n",
+                 start_date, start_date + 11, period, usb_status);
 
         // Отправляем по UART
         HAL_UART_Transmit(&huart1, (uint8_t*)uart_tx_buf, strlen(uart_tx_buf), 100);
 
         // Отладочное сообщение по USB
         snprintf(usb_msg, sizeof(usb_msg), "Sent to backup MCU: %s", uart_tx_buf);
-        SendUSBDebugMessage(usb_msg);
+       // SendUSBDebugMessage(usb_msg);
     } else {
-        SendUSBDebugMessage("No date/time data to send to backup MCU");
+       // SendUSBDebugMessage("No date/time data to send to backup MCU");
     }
 }
 
@@ -351,6 +345,7 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
 
     // Уменьшаем дополнительную паузу
     HAL_Delay(10);
+
 	ReadFPGAData(); // Теперь эта функция делает все: START + многократное чтение + усреднение
 
 	    if (fpga_data.data_ready) {
@@ -368,8 +363,8 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
 	                HAL_Delay(10);
 	            }
 	        }
-	        SendUSBDebugMessage("Averaged data received from FPGA:");
-	        PrintDataToUSB();
+	      //  SendUSBDebugMessage("Averaged data received from FPGA:");
+	       // PrintDataToUSB();
 	        fpga_data.data_ready = false;
 	    }
     // Поиск всех параметров в данных
@@ -436,24 +431,23 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
     }
 
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
-    HAL_Delay(10);
+    HAL_Delay(100);
 
     SendMeasurementDataViaLoRa();
+    HAL_Delay(2000);
+    SendTestDataViaLoRa();
+
     // После завершения всех операций отправляем COMPLETE
     SendUARTResponse(COMPLETE_STRING);
 
 }
+
+
 /**
   * @brief Отправка данных измерений через LoRa
   */
 void SendMeasurementDataViaLoRa(void) {
-    // Проверяем инициализацию LoRa
-    if (!lora_initialized) {
-        if (!InitializeLoRa()) {
-            SendUSBDebugMessage("LoRa initialization failed for measurement data send");
-            return;
-        }
-    }
+
 
     // Формируем данные для отправки
     uint8_t lora_data[128] = {0};
@@ -557,7 +551,7 @@ void SendMeasurementDataViaLoRa(void) {
     uint8_t total_length = data_index;
 
     // Настройка параметров передачи LoRa
-    sx126x_set_tx_params(&radio, pa_power, SX126X_RAMP_200_US);
+    sx126x_set_tx_params(&radio, pa_power, SX126X_RAMP_800_US);  // Было: SX126X_RAMP_200_US
 
     // Ожидаем, пока модуль освободится
     while (HAL_GPIO_ReadPin(sx1262_busy_port, sx1262_busy_pin) == GPIO_PIN_SET) {
@@ -567,7 +561,7 @@ void SendMeasurementDataViaLoRa(void) {
     // Записываем данные в буфер модуля LoRa
     sx126x_status_t status = sx126x_write_buffer(&radio, 0, lora_data, total_length);
     if (status != SX126X_STATUS_OK) {
-        SendUSBDebugMessage("LoRa write buffer failed for measurement data");
+       // SendUSBDebugMessage("LoRa write buffer failed for measurement data");
         return;
     }
 
@@ -575,17 +569,17 @@ void SendMeasurementDataViaLoRa(void) {
     pkt_params.pld_len_in_bytes = total_length;
     status = sx126x_set_lora_pkt_params(&radio, &pkt_params);
     if (status != SX126X_STATUS_OK) {
-        SendUSBDebugMessage("LoRa set packet params failed");
+     //   SendUSBDebugMessage("LoRa set packet params failed");
         return;
     }
 
     // Запускаем передачу
     status = sx126x_set_tx(&radio, SX126X_MAX_TIMEOUT_IN_MS);
     if (status != SX126X_STATUS_OK) {
-        SendUSBDebugMessage("LoRa transmission failed for measurement data");
+      SendUSBDebugMessage("LoRa transmission failed for measurement data");
     } else {
         snprintf(usb_msg, sizeof(usb_msg), "LoRa measurement data sent (%d bytes)", total_length);
-        SendUSBDebugMessage(usb_msg);
+       SendUSBDebugMessage(usb_msg);
     }
 }
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
@@ -615,88 +609,102 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   * @brief Инициализация модуля LoRa
   */
 bool InitializeLoRa(void) {
-    // Initialize radio context
-    radio.cs_port = sx1262_cs_port;
-    radio.cs_pin = sx1262_cs_pin;
-    radio.busy_port = sx1262_busy_port;
-    radio.busy_pin = sx1262_busy_pin;
-    radio.reset_port = sx1262_reset_port;
-    radio.reset_pin = sx1262_reset_pin;
-    radio.hspi = &hspi2;
+	 // Initialize radio context
+	    radio.cs_port = sx1262_cs_port;
+	    radio.cs_pin = sx1262_cs_pin;
+	    radio.busy_port = sx1262_busy_port;
+	    radio.busy_pin = sx1262_busy_pin;
+	    radio.reset_port = sx1262_reset_port;
+	    radio.reset_pin = sx1262_reset_pin;
+	    radio.hspi = &hspi2;
 
-    // Initialize LoRa parameters
-    lora_params.sf = SX126X_LORA_SF12;
-    lora_params.bw = SX126X_LORA_BW_125;
-    lora_params.cr = SX126X_LORA_CR_4_7;
-    lora_params.ldro = 0;
+	    // === ИЗМЕНЕНИЕ 1: Обновите параметры модуляции ===
+	    lora_params.sf = SX126X_LORA_SF9;          // Было: SX126X_LORA_SF12
+	    lora_params.bw = SX126X_LORA_BW_125;       // Было: SX126X_LORA_BW_125 (оставить)
+	    lora_params.cr = SX126X_LORA_CR_4_5;       // Было: SX126X_LORA_CR_4_7
+	    lora_params.ldro = 0x00;                   // Было: 0
 
-    pkt_params.preamble_len_in_symb = 12;
-    pkt_params.header_type = SX126X_LORA_PKT_EXPLICIT;
-    pkt_params.pld_len_in_bytes = 128;
-    pkt_params.crc_is_on = false;
-    pkt_params.invert_iq_is_on = false;
+	    // === ИЗМЕНЕНИЕ 2: Обновите параметры пакета ===
+	    pkt_params.preamble_len_in_symb = 12;      // Оставить как было
+	    pkt_params.header_type = SX126X_LORA_PKT_EXPLICIT; // Оставить
+	    pkt_params.pld_len_in_bytes = 128;         // Оставить
+	    pkt_params.crc_is_on = 0x01;               // Было: false
+	    pkt_params.invert_iq_is_on = 0x00;         // Было: false
 
-    pa_params.pa_duty_cycle = 0x04;
-    pa_params.hp_max = 0x07;
-    pa_params.device_sel = 0x00;
-    pa_params.pa_lut = 0x01;
+	    // === ИЗМЕНЕНИЕ 3: Обновите параметры усилителя мощности ===
+	    pa_params.pa_duty_cycle = 0x04;            // Оставить
+	    pa_params.hp_max = 0x07;                   // Оставить
+	    pa_params.device_sel = 0x00;               // Оставить
+	    pa_params.pa_lut = 0x01;                   // Оставить
 
-    // Initialize LoRa module
-    sx126x_status_t status = sx126x_hal_reset(&radio);
-    if (status != SX126X_STATUS_OK) {
-        SendUSBDebugMessage("LoRa reset failed");
-        return false;
-    }
-    HAL_Delay(250);
+	    // === ИЗМЕНЕНИЕ 4: Обновите мощность и частоту ===
+	    pa_power = 20;                             // Было: 10 (20 dBm вместо 10 dBm)
+	    frequency = 868900000U;                    // Было: 868000000U (868.9 MHz вместо 868.0 MHz)
 
-    status = sx126x_set_standby(&radio, SX126X_STANDBY_CFG_RC);
-    HAL_Delay(250);
+	    // === ИЗМЕНЕНИЕ 5: Обновите последовательность инициализации ===
+	    sx126x_status_t status = sx126x_hal_reset(&radio);
+	    if (status != SX126X_STATUS_OK) {
+	       // SendUSBDebugMessage("LoRa reset failed");
+	        return false;
+	    }
 
-    status = sx126x_hal_wakeup(&radio);
-    HAL_Delay(250);
+	    sx126x_hal_wakeup(&radio);
+	    HAL_Delay(10);
 
-    status = sx126x_set_reg_mode(&radio, SX126X_REG_MODE_LDO);
-    HAL_Delay(250);
+	    sx126x_set_standby(&radio, SX126X_STANDBY_CFG_RC);
+	    HAL_Delay(10);
 
-    status = sx126x_cal(&radio, SX126X_CAL_ALL);
-    HAL_Delay(250);
+	    // === ИЗМЕНЕНИЕ 6: Добавьте настройку TCXO ===
+	    sx126x_set_dio3_as_tcxo_ctrl(&radio, SX126X_TCXO_CTRL_2_4V, 5);
+	    HAL_Delay(10);
 
-    status = sx126x_set_standby(&radio, SX126X_STANDBY_CFG_RC);
-    HAL_Delay(250);
+	    // === ИЗМЕНЕНИЕ 7: Добавьте калибровку ===
+	    sx126x_cal(&radio, 0xFF);
+	    HAL_Delay(10);
 
-    status = sx126x_set_reg_mode(&radio, SX126X_REG_MODE_LDO);
-    HAL_Delay(250);
+	    sx126x_set_standby(&radio, SX126X_STANDBY_CFG_XOSC);
+	    HAL_Delay(10);
 
-    status = sx126x_set_pkt_type(&radio, SX126X_PKT_TYPE_LORA);
-    HAL_Delay(250);
+	    // === ИЗМЕНЕНИЕ 8: Используйте DCDC режим вместо LDO ===
+	    sx126x_set_reg_mode(&radio, SX126X_REG_MODE_DCDC);  // Было: SX126X_REG_MODE_LDO
+	    HAL_Delay(10);
 
-    status = sx126x_set_lora_mod_params(&radio, &lora_params);
-    HAL_Delay(250);
+	    sx126x_set_pkt_type(&radio, SX126X_PKT_TYPE_LORA);
+	    HAL_Delay(10);
 
-    status = sx126x_set_lora_pkt_params(&radio, &pkt_params);
-    HAL_Delay(250);
+	    sx126x_set_lora_mod_params(&radio, &lora_params);
+	    HAL_Delay(10);
 
-    sx126x_set_dio3_as_tcxo_ctrl(&radio, SX126X_TCXO_CTRL_2_4V, 5000);
-    HAL_Delay(250);
+	    sx126x_set_lora_pkt_params(&radio, &pkt_params);
+	    HAL_Delay(10);
 
-    status = sx126x_set_lora_sync_word(&radio, 0x12);
-    HAL_Delay(250);
+	    // === ИЗМЕНЕНИЕ 9: Обновите sync word ===
+	    sx126x_set_lora_sync_word(&radio, 0x12);           // Было: 0x12 (оставить)
+	    HAL_Delay(10);
 
-    status = sx126x_set_rf_freq(&radio, frequency);
-    HAL_Delay(250);
+	    sx126x_set_rf_freq(&radio, frequency);
+	    HAL_Delay(10);
 
-    status = sx126x_set_pa_cfg(&radio, &pa_params);
-    HAL_Delay(250);
+	    sx126x_set_pa_cfg(&radio, &pa_params);
+	    HAL_Delay(10);
 
-    status = sx126x_set_dio_irq_params(&radio,
-            SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE,
-            SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE, SX126X_IRQ_NONE,
-            SX126X_IRQ_NONE);
-    HAL_Delay(100);
+	    // === ИЗМЕНЕНИЕ 10: Обновите параметры TX ===
+	    sx126x_set_tx_params(&radio, pa_power, SX126X_RAMP_800_US);  // Было: SX126X_RAMP_200_US
+	    HAL_Delay(10);
 
-    lora_initialized = true;
-    SendUSBDebugMessage("LoRa module initialized successfully");
-    return true;
+	    sx126x_set_buffer_base_address(&radio, 0x00, 0x00);
+	    HAL_Delay(10);
+
+	    sx126x_set_dio_irq_params(&radio,
+	            SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE,
+	            SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE,
+	            SX126X_IRQ_NONE,
+	            SX126X_IRQ_NONE);
+	    HAL_Delay(100);
+
+	    lora_initialized = true;
+	  //  SendUSBDebugMessage("LoRa module initialized successfully with SF9/125kHz/868.9MHz");
+	    return true;
 }
 
 /**
@@ -705,15 +713,15 @@ bool InitializeLoRa(void) {
 void SendTestDataViaLoRa(void) {
     if (!lora_initialized) {
         if (!InitializeLoRa()) {
-            SendUSBDebugMessage("LoRa not initialized, cannot send data");
+            //SendUSBDebugMessage("LoRa not initialized, cannot send data");
             return;
         }
     }
 
     // Создаем тестовые данные - 5 чисел (например: 1,2,3,4,5)
-    const uint8_t test_data[] = {1, 2, 3, 4, 5};
+    const uint8_t test_data[] = {1};
 
-    sx126x_set_tx_params(&radio, pa_power, SX126X_RAMP_200_US);
+    sx126x_set_tx_params(&radio, pa_power, SX126X_RAMP_800_US);  // Было: SX126X_RAMP_200_US
 
     // Wait while module is busy
     while (HAL_GPIO_ReadPin(sx1262_busy_port, sx1262_busy_pin) == GPIO_PIN_SET);
@@ -721,16 +729,16 @@ void SendTestDataViaLoRa(void) {
     // Write data to buffer
     sx126x_status_t status = sx126x_write_buffer(&radio, 0, test_data, sizeof(test_data));
     if (status != SX126X_STATUS_OK) {
-        SendUSBDebugMessage("LoRa write buffer failed");
+      //  SendUSBDebugMessage("LoRa write buffer failed");
         return;
     }
 
     // Start transmission
     status = sx126x_set_tx(&radio, SX126X_MAX_TIMEOUT_IN_MS);
     if (status != SX126X_STATUS_OK) {
-        SendUSBDebugMessage("LoRa transmission failed");
+     //   SendUSBDebugMessage("LoRa transmission failed");
     } else {
-        SendUSBDebugMessage("LoRa test data sent successfully");
+      //  SendUSBDebugMessage("LoRa test data sent successfully");
     }
 }
 
@@ -778,28 +786,6 @@ void PrintDataToUSB(void) {
 }
 
 
-
-/**
-  * @brief Проверка и загрузка конфигурации ПЛИС при включении питания
-  * @return true если конфигурация успешно загружена, false в случае ошибки
-  */
-bool CheckAndLoadFPGAConfig(void) {
-    SendUSBDebugMessage("Checking FPGA configuration...");
-
-    // Получаем данные конфигурации из adc_plis.h
-    uint8_t *config_data = fpga_config;
-    uint32_t config_size = sizeof(fpga_config);
-
-    // Загружаем конфигурацию в ПЛИС
-    FPGA_SendConfig(config_data, config_size);
-
-    // Даем время ПЛИС на инициализацию
-    HAL_Delay(100);
-
-
-    SendUSBDebugMessage("FPGA configuration loaded successfully");
-    return true;
-}
 
 /**
   * @brief Отправка конфигурации в ПЛИС
@@ -942,12 +928,6 @@ void FPGA_LoadConfig(void) {
 	    HAL_Delay(5); // Увеличиваем до 5 мс
 }
 
-void FPGA_SendConfig(uint8_t *config_data, uint32_t size) {
-    FPGA_LoadConfig();
-}
-
-
-
 
 
 /**
@@ -967,7 +947,7 @@ void ReadFPGAData(void) {
     }
 
     snprintf(usb_msg, sizeof(usb_msg), "Starting %lu averaging cycles with threshold: %.1f", cycles, threshold);
-    SendUSBDebugMessage(usb_msg);
+   // SendUSBDebugMessage(usb_msg);
 
     uint32_t valid_cycles = 0; // Счетчик валидных циклов (без превышения порога)
 
@@ -1006,7 +986,7 @@ void ReadFPGAData(void) {
         // Если порог превышен, пропускаем этот цикл
         if (threshold_exceeded) {
             snprintf(usb_msg, sizeof(usb_msg), "Cycle %lu skipped - threshold exceeded", cycle + 1);
-            SendUSBDebugMessage(usb_msg);
+           // SendUSBDebugMessage(usb_msg);
             continue; // Переходим к следующей итерации цикла
         }
 
@@ -1026,7 +1006,7 @@ void ReadFPGAData(void) {
         if ((cycle + 1) % 10 == 0 || cycle == cycles - 1) {
             snprintf(usb_msg, sizeof(usb_msg), "Averaging progress: %lu/%lu cycles, valid: %lu",
                      cycle + 1, cycles, valid_cycles);
-            SendUSBDebugMessage(usb_msg);
+          //  SendUSBDebugMessage(usb_msg);
         }
 
         // Небольшая пауза между циклами
@@ -1043,11 +1023,11 @@ void ReadFPGAData(void) {
         averaging_complete = true;
 
         snprintf(usb_msg, sizeof(usb_msg), "Averaging completed: %lu valid cycles out of %lu", valid_cycles, cycles);
-        SendUSBDebugMessage(usb_msg);
+        //SendUSBDebugMessage(usb_msg);
     } else {
         fpga_data.data_ready = false;
         averaging_complete = false;
-        SendUSBDebugMessage("Averaging failed: no valid cycles (all exceeded threshold)");
+       // SendUSBDebugMessage("Averaging failed: no valid cycles (all exceeded threshold)");
     }
 }
 /* USER CODE END 0 */
@@ -1145,7 +1125,7 @@ int main(void)
 	      if (calculate_thickness_requested && parameters_initialized) {
 	          calculate_thickness_requested = false;
 	          ProcessDataByMethod();
-	          SendUSBDebugMessage("Thickness calculation completed");
+	          //SendUSBDebugMessage("Thickness calculation completed");
 	      }
 
 	      // Обработка UART от дежурного МК
@@ -1171,6 +1151,7 @@ int main(void)
 
   /* USER CODE END 3 */
 }
+
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -1393,6 +1374,9 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5|GPIO_PIN_15, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
@@ -1409,6 +1393,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_1;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PE5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PA5 PA15 */
@@ -1439,6 +1430,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA9 */
+  GPIO_InitStruct.Pin = GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PD6 */
   GPIO_InitStruct.Pin = GPIO_PIN_6;

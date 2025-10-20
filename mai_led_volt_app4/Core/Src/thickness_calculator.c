@@ -50,10 +50,10 @@ void LoadParametersFromFlash(void) {
     if (flash_params->crc == calculated_crc) {
         params = *flash_params;
         parameters_initialized = true;
-        SendUSBDebugMessage("Parameters loaded from Flash memory");
+       // SendUSBDebugMessage("Parameters loaded from Flash memory");
     } else {
         InitializeParameters();
-        SendUSBDebugMessage("Flash data corrupted, using default parameters");
+     //   SendUSBDebugMessage("Flash data corrupted, using default parameters");
     }
 }
 
@@ -77,7 +77,7 @@ void SaveParametersToFlash(void) {
     }
 
     HAL_FLASH_Lock();
-    SendUSBDebugMessage("Parameters saved to Flash memory");
+  //  SendUSBDebugMessage("Parameters saved to Flash memory");
 }
 
 /**
@@ -101,7 +101,7 @@ void InitializeParameters(void) {
 
     parameters_initialized = true;
     SaveParametersToFlash();
-    SendUSBDebugMessage("Parameters initialized with defaults and saved to Flash");
+   // SendUSBDebugMessage("Parameters initialized with defaults and saved to Flash");
 }
 
 /**
@@ -157,7 +157,7 @@ void CalculateAutocorrelation(void) {
   */
 uint32_t FindMaxAutocorrelationIndex(void) {
     if (!parameters_initialized) {
-        SendUSBDebugMessage("Parameters not initialized for ACF");
+       // SendUSBDebugMessage("Parameters not initialized for ACF");
         return 0;
     }
 
@@ -180,7 +180,7 @@ uint32_t FindMaxAutocorrelationIndex(void) {
   */
 void CalculateZeroCrossingThickness(const float32_t* data) {
     if (!parameters_initialized) {
-        SendUSBDebugMessage("Parameters not initialized for zero crossing");
+       // SendUSBDebugMessage("Parameters not initialized for zero crossing");
         return;
     }
 
@@ -198,7 +198,7 @@ void CalculateZeroCrossingThickness(const float32_t* data) {
     }
 
     if (!found_threshold) {
-        SendUSBDebugMessage("Zero crossing: threshold not found");
+      //  SendUSBDebugMessage("Zero crossing: threshold not found");
         thickness_value = 0.0f;
         return;
     }
@@ -213,7 +213,7 @@ void CalculateZeroCrossingThickness(const float32_t* data) {
     }
 
     if (zero_crossing_index == 0) {
-        SendUSBDebugMessage("Zero crossing: zero crossing not found");
+        //SendUSBDebugMessage("Zero crossing: zero crossing not found");
         thickness_value = 0.0f;
         return;
     }
@@ -227,7 +227,7 @@ void CalculateZeroCrossingThickness(const float32_t* data) {
   */
 void CalculateStrobeThickness(const float32_t* data) {
     if (!parameters_initialized) {
-        SendUSBDebugMessage("Parameters not initialized for strobe method");
+      //  SendUSBDebugMessage("Parameters not initialized for strobe method");
         return;
     }
 
@@ -252,7 +252,7 @@ void CalculateStrobeThickness(const float32_t* data) {
     }
 
     if (max_value_first == -FLT_MAX || max_value_second == -FLT_MAX) {
-        SendUSBDebugMessage("Strobe method: max values not found");
+       // SendUSBDebugMessage("Strobe method: max values not found");
         thickness_value = 0.0f;
         return;
     }
@@ -266,7 +266,7 @@ void CalculateStrobeThickness(const float32_t* data) {
   */
 void CalculateAndSendACFThickness(void) {
     if (!parameters_initialized) {
-        SendUSBDebugMessage("Parameters not initialized for ACF thickness calculation");
+     //   SendUSBDebugMessage("Parameters not initialized for ACF thickness calculation");
         return;
     }
 
@@ -280,13 +280,13 @@ void CalculateAndSendACFThickness(void) {
   */
 void ProcessDataByMethod(void) {
     if (!parameters_initialized) {
-        SendUSBDebugMessage("Parameters not initialized");
+     //   SendUSBDebugMessage("Parameters not initialized");
         return;
     }
 
     // ПРОВЕРЯЕМ, ЧТО УСРЕДНЕНИЕ ЗАВЕРШЕНО И ИСПОЛЬЗУЕМ УСРЕДНЕННЫЙ МАССИВ FPGA
     if (!averaging_complete) {
-        SendUSBDebugMessage("Averaging not complete, cannot calculate thickness");
+      //  SendUSBDebugMessage("Averaging not complete, cannot calculate thickness");
         thickness_value = 0.0f;
         return;
     }
@@ -323,7 +323,7 @@ void ProcessDataByMethod(void) {
             break;
 
         default:
-            SendUSBDebugMessage("Unknown method specified");
+         //   SendUSBDebugMessage("Unknown method specified");
             break;
     }
 }

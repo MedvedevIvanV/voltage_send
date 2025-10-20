@@ -66,6 +66,9 @@ volatile uint8_t complete_received = 0;
 
 // ФЛАГ ДЛЯ ОПРЕДЕЛЕНИЯ ПОЛУЧЕНИЯ ПЕРИОДА ОТ ОСНОВНОГО МК
 volatile uint8_t period_received = 0;
+
+// Переменная для хранения статуса USB (добавьте эту строку)
+volatile uint8_t usb_connection_status = 1;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -206,7 +209,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   */
 static void enter_sleep_mode(void)
 {
-    // Выключаем пины PB0 и PC13
+    // ЕСЛИ USB_STATUS = 1, ТО НЕ ПЕРЕХОДИМ В СОН И НЕ ОТКЛЮЧАЕМ ПИНЫ!
+    if (usb_connection_status == 1) {
+        return;
+    }
+
+    // Выключаем пины PB0 и PC13 только если USB_STATUS = 0
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
 
@@ -228,20 +236,24 @@ static void enter_sleep_mode(void)
 /**
   * @brief Process UART command from main MCU
   */
+// Функция приема данных
 static void process_uart_command(uint8_t* data, uint8_t len)
 {
     char* date_ptr = strstr((char*)data, "DATE:");
     char* time_ptr = strstr((char*)data, ";TIME:");
     char* period_ptr = strstr((char*)data, ";PERIOD:");
+    char* usb_ptr = strstr((char*)data, ";USB:");
 
-    if(date_ptr && time_ptr && period_ptr) {
+    if(date_ptr && time_ptr && period_ptr && usb_ptr) {
         char date_str[16] = {0};
         char time_str[16] = {0};
+        uint8_t usb_status = 0;
 
-        // Извлекаем дату и время из команды
+        // Извлекаем дату, время, период и статус USB из команды
         sscanf(date_ptr, "DATE:%15[^;]", date_ptr);
         sscanf(time_ptr, ";TIME:%15[^;]", time_ptr);
         sscanf(period_ptr, ";PERIOD:%lu", &period_sec);
+        sscanf(usb_ptr, ";USB:%hhu", &usb_status);
 
         // Копируем только нужные части
         strncpy(date_str, date_ptr + 5, 10); // "DATE:YYYY-MM-DD"
@@ -250,33 +262,40 @@ static void process_uart_command(uint8_t* data, uint8_t len)
         // УСТАНАВЛИВАЕМ ФЛАГ, ЧТО ПЕРИОД ПОЛУЧЕН
         period_received = 1;
 
+        // Сохраняем статус USB для дальнейшего использования
+        usb_connection_status = usb_status;
+
         // Отправляем ответ с напряжением и температурой
         send_datetime_with_voltage_and_temp(date_str, time_str);
 
-        // Ждем COMPLETE сообщение или таймаут 10 секунд
-        uint32_t start_time = HAL_GetTick();
-        complete_received = 0;
+        // ЕСЛИ USB_STATUS = 1, ТО НЕ ПЕРЕХОДИМ В СОН И НЕ ОТКЛЮЧАЕМ ПИНЫ!
+        if (usb_connection_status == 0) {
+            // Ждем COMPLETE сообщение или таймаут 10 секунд
+            uint32_t start_time = HAL_GetTick();
+            complete_received = 0;
 
-        while ((HAL_GetTick() - start_time) < COMPLETE_TIMEOUT_MS && !complete_received) {
-            // Обрабатываем входящие UART данные
-            if(uart_cmd_ready) {
-                uart_cmd_ready = 0;
-                // Если пришла новая команда, обрабатываем ее
-                process_uart_command(uart_rx_buf, uart_rx_pos);
+            while ((HAL_GetTick() - start_time) < COMPLETE_TIMEOUT_MS && !complete_received) {
+                // Обрабатываем входящие UART данные
+                if(uart_cmd_ready) {
+                    uart_cmd_ready = 0;
+                    // Если пришла новая команда, обрабатываем ее
+                    process_uart_command(uart_rx_buf, uart_rx_pos);
+                }
+
+                // Таймаут UART приема
+                if(uart_rx_pos > 0 && (HAL_GetTick() - uart_last_rx_time) > UART_TIMEOUT_MS) {
+                    uart_rx_pos = 0;
+                    memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
+                    HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
+                }
+
+                HAL_Delay(10);
             }
 
-            // Таймаут UART приема
-            if(uart_rx_pos > 0 && (HAL_GetTick() - uart_last_rx_time) > UART_TIMEOUT_MS) {
-                uart_rx_pos = 0;
-                memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
-                HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
-            }
-
-            HAL_Delay(10);
+            // Переходим в сон только если USB_STATUS = 0
+            enter_sleep_mode();
         }
-
-        // Переходим в сон независимо от того, получен COMPLETE или нет
-        enter_sleep_mode();
+        // ЕСЛИ USB_STATUS = 1, ТО ПРОСТО ПРОДОЛЖАЕМ РАБОТУ В НОРМАЛЬНОМ РЕЖИМЕ
     }
 
     uart_rx_pos = 0;
@@ -375,76 +394,75 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    // ГЛАВНОЕ ИЗМЕНЕНИЕ: Проверяем флаг пробуждения от RTC ТОЛЬКО если период уже получен
-    if(wakeup_flag && period_received)
-    {
-      // Сбрасываем флаг
-      wakeup_flag = 0;
+	  // ГЛАВНОЕ ИЗМЕНЕНИЕ: Проверяем флаг пробуждения от RTC ТОЛЬКО если период уже получен И USB_STATUS = 0
+	     if(wakeup_flag && period_received && (usb_connection_status == 0))
+	     {
+	         // Сбрасываем флаг
+	         wakeup_flag = 0;
 
-      // Включаем пины PC13 и PB0
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
-      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+	         // Включаем пины PC13 и PB0
+	         HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+	         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
 
-      // Ждем 3 секунды после включения
-      HAL_Delay(3000);
+	         // Ждем 3 секунды после включения
+	         HAL_Delay(3000);
 
-      // Измеряем напряжение и температуру
-      float voltage = read_voltage();
-      float temperature = read_temperature();
+	         // Измеряем напряжение и температуру
+	         float voltage = read_voltage();
+	         float temperature = read_temperature();
 
-      // Формируем и отправляем сообщение основному МК
-      char uart_msg[128];
-      snprintf(uart_msg, sizeof(uart_msg),
-             "DATE:2000-01-01;TIME:00:00:00;PERIOD:%lu;VOLTAGE:%.4f;TEMP:%.2f\r\n",
-             period_sec, voltage, temperature);
+	         // Формируем и отправляем сообщение основному МК
+	         char uart_msg[128];
+	         snprintf(uart_msg, sizeof(uart_msg),
+	                "DATE:2000-01-01;TIME:00:00:00;PERIOD:%lu;VOLTAGE:%.4f;TEMP:%.2f\r\n",
+	                period_sec, voltage, temperature);
 
-      HAL_UART_Transmit(&hlpuart1, (uint8_t*)uart_msg, strlen(uart_msg), 100);
+	         HAL_UART_Transmit(&hlpuart1, (uint8_t*)uart_msg, strlen(uart_msg), 100);
 
-      // Ждем COMPLETE сообщение или таймаут 10 секунд
-      uint32_t start_time = HAL_GetTick();
-      complete_received = 0;
+	         // Ждем COMPLETE сообщение или таймаут 10 секунд
+	         uint32_t start_time = HAL_GetTick();
+	         complete_received = 0;
 
-      while ((HAL_GetTick() - start_time) < COMPLETE_TIMEOUT_MS && !complete_received) {
-          // Обрабатываем входящие UART данные
-          if(uart_cmd_ready) {
-              uart_cmd_ready = 0;
-              process_uart_command(uart_rx_buf, uart_rx_pos);
-          }
+	         while ((HAL_GetTick() - start_time) < COMPLETE_TIMEOUT_MS && !complete_received) {
+	             // Обрабатываем входящие UART данные
+	             if(uart_cmd_ready) {
+	                 uart_cmd_ready = 0;
+	                 process_uart_command(uart_rx_buf, uart_rx_pos);
+	             }
 
-          // Таймаут UART приема
-          if(uart_rx_pos > 0 && (HAL_GetTick() - uart_last_rx_time) > UART_TIMEOUT_MS) {
-              uart_rx_pos = 0;
-              memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
-              HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
-          }
+	             // Таймаут UART приема
+	             if(uart_rx_pos > 0 && (HAL_GetTick() - uart_last_rx_time) > UART_TIMEOUT_MS) {
+	                 uart_rx_pos = 0;
+	                 memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
+	                 HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
+	             }
 
-          HAL_Delay(10);
-      }
+	             HAL_Delay(10);
+	         }
 
-      // Переходим в сон независимо от того, получен COMPLETE или нет
-      enter_sleep_mode();
-    }
+	         // Переходим в сон только если USB_STATUS = 0
+	         enter_sleep_mode();
+	     }
 
-    // Обработка UART команд (работает всегда для получения периода)
-    if(uart_cmd_ready) {
-        uart_cmd_ready = 0;
-        process_uart_command(uart_rx_buf, uart_rx_pos);
-    }
+	     // Обработка UART команд (работает всегда для получения периода и статуса USB)
+	     if(uart_cmd_ready) {
+	         uart_cmd_ready = 0;
+	         process_uart_command(uart_rx_buf, uart_rx_pos);
+	     }
 
-    // Таймаут приема UART
-    if(uart_rx_pos > 0 && (HAL_GetTick() - uart_last_rx_time) > UART_TIMEOUT_MS) {
-        uart_rx_pos = 0;
-        memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
-        HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
-    }
+	     // Таймаут приема UART
+	     if(uart_rx_pos > 0 && (HAL_GetTick() - uart_last_rx_time) > UART_TIMEOUT_MS) {
+	         uart_rx_pos = 0;
+	         memset(uart_rx_buf, 0, sizeof(uart_rx_buf));
+	         HAL_UART_Receive_IT(&hlpuart1, &uart_rx_buf[uart_rx_pos], 1);
+	     }
 
-    /* USER CODE END WHILE */
+	     /* USER CODE END WHILE */
 
-    /* USER CODE BEGIN 3 */
-  }
-  /* USER CODE END 3 */
+	     /* USER CODE BEGIN 3 */
+	 }
+	 /* USER CODE END 3 */
 }
-
 
 // Остальной код без изменений (SystemClock_Config, MX_ADC1_Init, MX_LPUART1_UART_Init, MX_RTC_Init, MX_GPIO_Init, Error_Handler)
 
