@@ -23,7 +23,8 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdio.h>
-
+#include <u_utils.h>
+#include "stm32l5xx_hal.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -131,49 +132,9 @@ static float read_voltage(void)
   */
 static float read_temperature(void)
 {
-    uint32_t adcValue = 0;
-    float temperature = 0.0f;
-    ADC_ChannelConfTypeDef sConfig = {0};
-
-    // Конфигурация канала температурного датчика
-    sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
-    sConfig.Rank = ADC_REGULAR_RANK_1;
-    sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
-    sConfig.SingleDiff = ADC_SINGLE_ENDED;
-    sConfig.OffsetNumber = ADC_OFFSET_NONE;
-    sConfig.Offset = 0;
-
-    if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-    {
-        return 0.0f;
-    }
-
-    // Калибровка ADC
-    if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
-    {
-        return 0.0f;
-    }
-
-    // Запуск преобразования ADC
-    if (HAL_ADC_Start(&hadc1) == HAL_OK)
-    {
-        // Ожидание завершения преобразования
-        if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK)
-        {
-            adcValue = HAL_ADC_GetValue(&hadc1);
-
-            // Калибровочные значения для STM32L5
-            uint32_t raw_ts_cal1 = *((uint16_t*)0x0BFA05A8); // Калибровка при 30°C
-            uint32_t raw_ts_cal2 = *((uint16_t*)0x0BFA05CA); // Калибровка при 130°C
-
-            // Расчет температуры по калибровочным значениям
-            temperature = 30.0f + ((float)adcValue - (float)raw_ts_cal1) *
-                         (100.0f / ((float)raw_ts_cal2 - (float)raw_ts_cal1));
-        }
-        HAL_ADC_Stop(&hadc1);
-    }
-
-    return temperature;
+    TU1AdcValues adcValues = {0};
+    GetAdcValues(&adcValues);
+    return adcValues.ChipTemperature;
 }
 
 /**

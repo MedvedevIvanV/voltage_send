@@ -14,7 +14,6 @@
 #include "usbd_cdc_if.h"
 #include "arm_math.h"
 #include <stdlib.h>
-#include "a-scan.h"
 #include "sx126x.h"
 #include "sx126x_hal.h"
 #include "thickness_calculator.h"
@@ -84,7 +83,7 @@ extern volatile uint16_t usb_rx_index;
 // Временные переменные (НЕ сохраняются во Flash)
 char start_date[20] = {0}; // Формат: "2024-01-15 14:30:25"
 uint32_t period = 0;
-
+float old_gain;
 
 // UART переменные
 #define UART_TX_BUF_SIZE 128
@@ -113,7 +112,8 @@ uint32_t lora_last_send_time = 0;  // Добавьте эту переменну
 float received_voltage = 0.0f;
 float received_temp = 0.0f;
 
-
+float dac_voltage = 0.0f;
+uint32_t dac_last_update = 0;
 typedef struct {
     uint16_t data[DATA_SIZE]; // Буфер для хранения данных от ПЛИС
     bool data_ready;                  // Флаг готовности данных
@@ -217,6 +217,9 @@ void ParseParameters(const char* params_str) {
         LoadParametersFromFlash();
     }
 
+    // Сохраняем старый gain ДО парсинга
+   old_gain = params.gain;
+
     char* token = strtok(buffer, "|");
 
     while (token != NULL) {
@@ -260,16 +263,14 @@ void ParseParameters(const char* params_str) {
                 // Сохраняем start_date во временную переменную (НЕ во Flash)
                 strncpy(start_date, param_value, sizeof(start_date) - 1);
                 start_date[sizeof(start_date) - 1] = '\0';
-              //  SendUSBDebugMessage("Start date parsed (not saved to Flash)");
             } else if (strcmp(param_name, "period") == 0) {
                 // Сохраняем period во временную переменную (НЕ во Flash)
                 period = atoi(param_value);
-                snprintf(usb_msg, sizeof(usb_msg), "Period parsed: %lu (not saved to Flash)", period);
-               // SendUSBDebugMessage(usb_msg);
             }
         }
         token = strtok(NULL, "|");
     }
+
 
     // Сохраняем обновленные параметры в Flash (без start_date и period)
     SaveParametersToFlash();
@@ -279,7 +280,6 @@ void ParseParameters(const char* params_str) {
 
     // Устанавливаем флаг для запуска расчета
     calculate_thickness_requested = true;
-  //  SendUSBDebugMessage("Parameters parsed and saved successfully - calculation requested");
 }
 
 /**
@@ -337,6 +337,7 @@ void SendDateTimeToBackupMCU(void) {
   * @param len Длина данных
   */
 void ProcessUARTCommand(uint8_t* data, uint8_t len) {
+    // ОБНОВЛЯЕМ DAC ЕСЛИ gain ИЗМЕНИЛСЯ
 
     HAL_Delay(150);
 
@@ -364,7 +365,7 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
 	            }
 	        }
 	      //  SendUSBDebugMessage("Averaged data received from FPGA:");
-	       // PrintDataToUSB();
+	        PrintDataToUSB();
 	        fpga_data.data_ready = false;
 	    }
     // Поиск всех параметров в данных
@@ -431,8 +432,9 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
     }
 
     CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    HAL_Delay(10);
+    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_RESET);
     HAL_Delay(100);
-
     SendMeasurementDataViaLoRa();
     HAL_Delay(2000);
     SendTestDataViaLoRa();
@@ -1030,6 +1032,16 @@ void ReadFPGAData(void) {
        // SendUSBDebugMessage("Averaging failed: no valid cycles (all exceeded threshold)");
     }
 }
+
+void Set_DAC_Voltage(float voltage) {
+    if (voltage < 0) voltage = 0;
+    if (voltage > 1) voltage = 1;
+
+    uint32_t dac_value = (voltage / 3.3f) * 4095;
+    HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
+    HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
+    dac_voltage = voltage;
+}
 /* USER CODE END 0 */
 
 /**
@@ -1059,6 +1071,8 @@ int main(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
+
+
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -1096,13 +1110,24 @@ int main(void)
 	  LoadParametersFromFlash();
 	  HAL_Delay(1000);
 
+	  if (parameters_initialized) {
+	      Set_DAC_Voltage(params.gain);
+	  }
 
 	  InitializeLoRa();
+
+	  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 	  while (1) {
+		  HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_5);
+		  HAL_Delay(1000);
+		  if (params.gain != old_gain) {
+		          Set_DAC_Voltage(params.gain);
+		          old_gain = params.gain;
+		      }
 
 
 	      if (new_data_received) {
@@ -1145,6 +1170,8 @@ int main(void)
 
 	      HAL_Delay(10);
 	  }
+
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -1452,6 +1479,7 @@ static void MX_GPIO_Init(void)
 /* FSMC initialization function */
 static void MX_FSMC_Init(void)
 {
+
   /* USER CODE BEGIN FSMC_Init 0 */
 
   /* USER CODE END FSMC_Init 0 */
@@ -1468,7 +1496,7 @@ static void MX_FSMC_Init(void)
   hsram1.Extended = FSMC_NORSRAM_EXTENDED_DEVICE;
   /* hsram1.Init */
   hsram1.Init.NSBank = FSMC_NORSRAM_BANK1;
-  hsram1.Init.DataAddressMux = FSMC_DATA_ADDRESS_MUX_DISABLE;
+  hsram1.Init.DataAddressMux = FSMC_DATA_ADDRESS_MUX_ENABLE;
   hsram1.Init.MemoryType = FSMC_MEMORY_TYPE_PSRAM;
   hsram1.Init.MemoryDataWidth = FSMC_NORSRAM_MEM_BUS_WIDTH_16;
   hsram1.Init.BurstAccessMode = FSMC_BURST_ACCESS_MODE_DISABLE;
@@ -1482,12 +1510,12 @@ static void MX_FSMC_Init(void)
   hsram1.Init.WriteBurst = FSMC_WRITE_BURST_DISABLE;
   hsram1.Init.PageSize = FSMC_PAGE_SIZE_NONE;
   /* Timing */
-  Timing.AddressSetupTime = 2;
-  Timing.AddressHoldTime = 1;
-  Timing.DataSetupTime =  5;
-  Timing.BusTurnAroundDuration = 1;
-  Timing.CLKDivision = 2;
-  Timing.DataLatency = 2;
+  Timing.AddressSetupTime = 15;
+  Timing.AddressHoldTime = 15;
+  Timing.DataSetupTime = 255;
+  Timing.BusTurnAroundDuration = 15;
+  Timing.CLKDivision = 16;
+  Timing.DataLatency = 17;
   Timing.AccessMode = FSMC_ACCESS_MODE_A;
   /* ExtTiming */
 

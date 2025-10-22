@@ -130,3 +130,4 @@ void CDC_Set_UART_Handle(UART_HandleTypeDef *huart);
 #endif
 
 #endif /* __USBD_CDC_IF_H__ */
+
