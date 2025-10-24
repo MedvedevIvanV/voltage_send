@@ -36,7 +36,7 @@
 /* USER CODE BEGIN PD */
 #define UART_RX_BUF_SIZE       128
 #define UART_TIMEOUT_MS        100
-#define COMPLETE_TIMEOUT_MS    20000  // 15 секунд ожидания COMPLETE
+#define COMPLETE_TIMEOUT_MS    50000  // 15 секунд ожидания COMPLETE
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/

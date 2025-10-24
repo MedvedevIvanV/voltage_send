@@ -30,7 +30,7 @@
 /* Private macro -------------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-#define USB_RX_BUFFER_SIZE 300
+#define USB_RX_BUFFER_SIZE 1100
 /* Private variables ---------------------------------------------------------*/
 volatile uint8_t usb_rx_buffer[USB_RX_BUFFER_SIZE] = {0};
 volatile uint16_t usb_rx_index = 0;

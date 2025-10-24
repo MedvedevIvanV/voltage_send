@@ -4,14 +4,15 @@
 #include "main.h"
 #include "arm_math.h"
 #include <stdbool.h>
+#include <string.h>
 
 // Определения размеров
 #define FINAL_DATA_SIZE 5000
 #define DATA_VALUES_COUNT 4600
 #define DATA_SIZE 5000
+#define NUM_PARAM_SETS 4
 
-
-// Структура для хранения параметров
+// Структура для хранения параметров (одного набора)
 typedef struct {
     uint32_t start_index;
     float wave_speed;
@@ -30,14 +31,22 @@ typedef struct {
     uint32_t crc;
 } Parameters_t;
 
+// Структура для временных параметров (не сохраняются в FLASH)
+typedef struct {
+    char start_date[20];  // "2024-01-15 14:30:00"
+    uint32_t period;      // в секундах
+} TempParams_t;
+
 // Внешние переменные
-extern Parameters_t params;
-extern bool parameters_initialized;
+extern Parameters_t params[NUM_PARAM_SETS];  // 4 набора параметров
+extern TempParams_t temp_params;             // временные параметры
+extern bool parameters_initialized[NUM_PARAM_SETS];
 extern bool calculate_thickness_requested;
 extern float thickness_value;
 extern float frequency_ns;
 extern float averaged_fpga_data[DATA_SIZE];
 extern bool averaging_complete;
+
 // Буферы данных
 extern float32_t normalized_data[DATA_VALUES_COUNT];
 extern float32_t autocorrelation_result[DATA_VALUES_COUNT];
@@ -51,18 +60,27 @@ void SaveParametersToFlash(void);
 void LoadParametersFromFlash(void);
 uint32_t CalculateCRC32(const uint8_t *data, size_t length);
 
+// Функции парсинга входящих данных
+bool ParseGeneralParams(const char* data);
+bool ParseSetParams(const char* data, uint8_t set_number);
+bool ParseIncomingData(const char* incoming_string);
+
 // Функции расчета толщины
-void CalculateZeroCrossingThickness(const float32_t* data);
-void CalculateStrobeThickness(const float32_t* data);
-void CalculateAndSendACFThickness(void);
-void ProcessDataByMethod(void);
-bool ProcessCycle(uint32_t cycle_num);
-bool CheckThreshold(const float32_t* data, uint32_t size);
+void CalculateZeroCrossingThickness(const float32_t* data, uint8_t param_set);
+void CalculateStrobeThickness(const float32_t* data, uint8_t param_set);
+void CalculateAndSendACFThickness(uint8_t param_set);
+void ProcessDataByMethod(uint8_t param_set);
+bool ProcessCycle(uint32_t cycle_num, uint8_t param_set);
+bool CheckThreshold(const float32_t* data, uint32_t size, uint8_t param_set);
 
 // Вспомогательные функции
-void AddRandomNoiseAndExtend(const float32_t* src, float32_t* dest, uint32_t dest_size);
-void NormalizeData(void);
-void CalculateAutocorrelation(void);
-uint32_t FindMaxAutocorrelationIndex(void);
+void AddRandomNoiseAndExtend(const float32_t* src, float32_t* dest, uint32_t dest_size, uint8_t param_set);
+void NormalizeData(uint8_t param_set);
+void CalculateAutocorrelation(uint8_t param_set);
+uint32_t FindMaxAutocorrelationIndex(uint8_t param_set);
+
+// Функции выбора активного набора параметров
+uint8_t GetActiveParamSet(void);
+void SetActiveParamSet(uint8_t set_number);
 
 #endif // THICKNESS_CALCULATOR_H
