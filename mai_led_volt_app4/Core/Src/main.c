@@ -131,6 +131,9 @@ bool averaging_complete = false;          // Флаг завершения ус�
 
 // Переменные для хранения результатов расчета толщины для каждого набора
 float thickness_values[4] = {0};
+
+
+bool active_channels[4] = {false}; // Флаги активных каналов
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -283,10 +286,19 @@ void ParsePRSection(char* pr_str, int pr_index) {
   * @brief Парсинг параметров из строки
   * @param params_str Строка с параметрами
   */
+/**
+  * @brief Парсинг параметров из строки с определением активных каналов
+  * @param params_str Строка с параметрами
+  */
 void ParseParameters(const char* params_str) {
     char buffer[USB_RX_BUFFER_SIZE];
     strncpy(buffer, params_str, sizeof(buffer) - 1);
     buffer[sizeof(buffer) - 1] = '\0';
+
+    // Сбрасываем флаги активных каналов
+    for (int i = 0; i < 4; i++) {
+        active_channels[i] = false;
+    }
 
     // Загружаем текущие параметры (если еще не инициализированы)
     for (int i = 0; i < 4; i++) {
@@ -320,18 +332,22 @@ void ParseParameters(const char* params_str) {
         else if (strncmp(sections[i], "PR1=", 4) == 0) {
             // Обрабатываем PR1= секцию
             ParsePRSection(sections[i] + 4, 0); // +4 чтобы пропустить "PR1=", индекс 0
+            active_channels[0] = true; // Помечаем канал как активный
         }
         else if (strncmp(sections[i], "PR2=", 4) == 0) {
             // Обрабатываем PR2= секцию
             ParsePRSection(sections[i] + 4, 1); // +4 чтобы пропустить "PR2=", индекс 1
+            active_channels[1] = true; // Помечаем канал как активный
         }
         else if (strncmp(sections[i], "PR3=", 4) == 0) {
             // Обрабатываем PR3= секцию
             ParsePRSection(sections[i] + 4, 2); // +4 чтобы пропустить "PR3=", индекс 2
+            active_channels[2] = true; // Помечаем канал как активный
         }
         else if (strncmp(sections[i], "PR4=", 4) == 0) {
             // Обрабатываем PR4= секцию
             ParsePRSection(sections[i] + 4, 3); // +4 чтобы пропустить "PR4=", индекс 3
+            active_channels[3] = true; // Помечаем канал как активный
         }
     }
 
@@ -349,9 +365,9 @@ void ParseParameters(const char* params_str) {
   * @brief Отправка текущих параметров обратно в приложение
   */
 void SendParametersResponse(void) {
-    // Отправляем параметры для всех 4 наборов
+    // Отправляем параметры только для активных каналов
     for (int i = 0; i < 4; i++) {
-        if (!parameters_initialized[i]) {
+        if (!active_channels[i] || !parameters_initialized[i]) {
             continue;
         }
 
@@ -441,18 +457,19 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
         // ОТПРАВЛЯЕМ РАСШИРЕННЫЕ ДАННЫЕ ПО USB ДЛЯ ВСЕХ НАБОРОВ
 
     // ВЫПОЛНЯЕМ ОПЕРАЦИИ ДЛЯ ВСЕХ 4 НАБОРОВ ПАРАМЕТРОВ
-    for (int i = 0; i < 4; i++) {
-        // Пропускаем набор если параметры не инициализированы
-        if (!parameters_initialized[i]) {
-            continue;
-        }
+        for (int i = 0; i < 4; i++) {
+            // Пропускаем канал если он не активен ИЛИ параметры не инициализированы
+            if (!active_channels[i] || !parameters_initialized[i]) {
+                continue;
+            }
 
-        switch(i) {
-            case 0: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET); break;
-            case 1: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_SET); break;
-            case 2: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET); break;
-            case 3: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_SET); break;
-        }
+            // Остальной код обработки для активного канала остается без изменений
+            switch(i) {
+                case 0: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET); break;
+                case 1: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_SET); break;
+                case 2: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET); break;
+                case 3: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_SET); break;
+            }
 
         // Устанавливаем DAC напряжение для текущего набора параметров
         Set_DAC_Voltage(params[i].gain);
@@ -1064,14 +1081,16 @@ int main(void)
 
     fpga_reg = (volatile uint16_t *)FPGA_BASE_ADDRESS;
     memset(&fpga_data, 0, sizeof(fpga_data));
-    HAL_Delay(1000);
 
+    // Инициализация флагов активных каналов
+    for (int i = 0; i < 4; i++) {
+        active_channels[i] = false;
+    }
+
+    HAL_Delay(1000);
     LoadParametersFromFlash();
     HAL_Delay(1000);
-
-
     InitializeLoRa();
-
     /* USER CODE END 2 */
 
     /* Infinite loop */
