@@ -132,8 +132,30 @@ static float read_voltage(void)
   */
 static float read_temperature(void)
 {
+    // Добавляем задержку для стабилизации ADC
+    HAL_Delay(10);
+
+    // Полная инициализация ADC перед каждым измерением
+    if (HAL_ADC_DeInit(&hadc1) != HAL_OK) {
+        return -999.0f;
+    }
+    if (HAL_ADC_Init(&hadc1) != HAL_OK) {
+        return -999.0f;
+    }
+
+    // Добавляем дополнительную задержку после инициализации
+    HAL_Delay(5);
+
     TU1AdcValues adcValues = {0};
     GetAdcValues(&adcValues);
+
+    // Проверяем корректность значения температуры
+    if (adcValues.ChipTemperature < -40.0f || adcValues.ChipTemperature > 150.0f) {
+        // Повторная попытка измерения при некорректном значении
+        HAL_Delay(5);
+        GetAdcValues(&adcValues);
+    }
+
     return adcValues.ChipTemperature;
 }
 
@@ -220,6 +242,8 @@ static void process_uart_command(uint8_t* data, uint8_t len)
         strncpy(date_str, date_ptr + 5, 10); // "DATE:YYYY-MM-DD"
         strncpy(time_str, time_ptr + 6, 8);  // "TIME:HH:MM:SS"
 
+        HAL_Delay(100);
+
         // УСТАНАВЛИВАЕМ ФЛАГ, ЧТО ПЕРИОД ПОЛУЧЕН
         period_received = 1;
 
@@ -227,7 +251,7 @@ static void process_uart_command(uint8_t* data, uint8_t len)
         usb_connection_status = usb_status;
 
         // Отправляем ответ с напряжением и температурой
-        send_datetime_with_voltage_and_temp(date_str, time_str);
+       send_datetime_with_voltage_and_temp(date_str, time_str);
 
         // ЕСЛИ USB_STATUS = 1, ТО НЕ ПЕРЕХОДИМ В СОН И НЕ ОТКЛЮЧАЕМ ПИНЫ!
         if (usb_connection_status == 0) {
@@ -271,6 +295,8 @@ static void send_datetime_with_voltage_and_temp(char* date_str, char* time_str)
 {
     float voltage = read_voltage();
     float temperature = read_temperature();
+
+
     char uart_msg[128];
 
     // Форматируем сообщение в том же формате, что и во втором коде
@@ -349,12 +375,17 @@ int main(void)
 
   // СБРАСЫВАЕМ ФЛАГ ПОЛУЧЕНИЯ ПЕРИОДА ПРИ СТАРТЕ
   period_received = 0;
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
+
   {
+
+	  // Измеряем напряжение и температуру
 	  // ГЛАВНОЕ ИЗМЕНЕНИЕ: Проверяем флаг пробуждения от RTC ТОЛЬКО если период уже получен И USB_STATUS = 0
 	     if(wakeup_flag && period_received && (usb_connection_status == 0))
 	     {
@@ -371,6 +402,7 @@ int main(void)
 	         // Измеряем напряжение и температуру
 	         float voltage = read_voltage();
 	         float temperature = read_temperature();
+
 
 	         // Формируем и отправляем сообщение основному МК
 	         char uart_msg[128];

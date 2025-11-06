@@ -10,6 +10,9 @@ void GetAdcValues(TU1AdcValues *const OutVal)
 	// Включаем питание АЦП
   // Включаем питание датчика температуры, напряжения батареи и опорного напряжения
   MODIFY_REG(ADC12_COMMON->CCR, ADC_CCR_PRESC_Msk | ADC_CCR_CKMODE_Msk, ADC_CCR_TSEN | ADC_CCR_VBATEN | ADC_CCR_VREFEN | ADC_CCR_CKMODE_1);
+  // Задержка для стабилизации датчика температуры
+  volatile int i;
+  for(i = 0; i < 1000; i++); // Короткая задержка
   MODIFY_REG(ADC12_COMMON->CCR, 0, ADC_CCR_TSEN | ADC_CCR_VBATEN | ADC_CCR_VREFEN);
 
    MODIFY_REG(ADC1->CR,   0,  ADC_CR_ADEN);

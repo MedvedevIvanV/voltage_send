@@ -283,10 +283,6 @@ void ParsePRSection(char* pr_str, int pr_index) {
 }
 
 /**
-  * @brief Парсинг параметров из строки
-  * @param params_str Строка с параметрами
-  */
-/**
   * @brief Парсинг параметров из строки с определением активных каналов
   * @param params_str Строка с параметрами
   */
@@ -456,7 +452,7 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
 
         // ОТПРАВЛЯЕМ РАСШИРЕННЫЕ ДАННЫЕ ПО USB ДЛЯ ВСЕХ НАБОРОВ
 
-    // ВЫПОЛНЯЕМ ОПЕРАЦИИ ДЛЯ ВСЕХ 4 НАБОРОВ ПАРАМЕТРОВ
+        // ВЫПОЛНЯЕМ ОПЕРАЦИИ ТОЛЬКО ДЛЯ АКТИВНЫХ КАНАЛОВ
         for (int i = 0; i < 4; i++) {
             // Пропускаем канал если он не активен ИЛИ параметры не инициализированы
             if (!active_channels[i] || !parameters_initialized[i]) {
@@ -1091,6 +1087,7 @@ int main(void)
     LoadParametersFromFlash();
     HAL_Delay(1000);
     InitializeLoRa();
+
     /* USER CODE END 2 */
 
     /* Infinite loop */
