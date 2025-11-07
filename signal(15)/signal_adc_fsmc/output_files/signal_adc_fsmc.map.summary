@@ -1,0 +1,14 @@
+Analysis & Synthesis Status : Successful - Fri Nov 07 13:03:41 2025
+Quartus Prime Version : 17.1.0 Build 590 10/25/2017 SJ Lite Edition
+Revision Name : signal_adc_fsmc
+Top-level Entity Name : signal_adc_fsmc
+Family : Cyclone 10 LP
+Total logic elements : 67
+    Total combinational functions : 67
+    Dedicated logic registers : 28
+Total registers : 28
+Total pins : 5
+Total virtual pins : 0
+Total memory bits : 0
+Embedded Multiplier 9-bit elements : 0
+Total PLLs : 1

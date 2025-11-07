@@ -1,0 +1,102 @@
+Assembler report for signal_adc_fsmc
+Fri Nov 07 13:03:52 2025
+Quartus Prime Version 17.1.0 Build 590 10/25/2017 SJ Lite Edition
+
+
+---------------------
+; Table of Contents ;
+---------------------
+  1. Legal Notice
+  2. Assembler Summary
+  3. Assembler Settings
+  4. Assembler Generated Files
+  5. Assembler Device Options: C:/FGPA/signal(15)/signal_adc_fsmc/output_files/signal_adc_fsmc.sof
+  6. Assembler Device Options: C:/FGPA/signal(15)/signal_adc_fsmc/output_files/signal_adc_fsmc.rbf
+  7. Assembler Messages
+
+
+
+----------------
+; Legal Notice ;
+----------------
+Copyright (C) 2017  Intel Corporation. All rights reserved.
+Your use of Intel Corporation's design tools, logic functions 
+and other software and tools, and its AMPP partner logic 
+functions, and any output files from any of the foregoing 
+(including device programming or simulation files), and any 
+associated documentation or information are expressly subject 
+to the terms and conditions of the Intel Program License 
+Subscription Agreement, the Intel Quartus Prime License Agreement,
+the Intel FPGA IP License Agreement, or other applicable license
+agreement, including, without limitation, that your use is for
+the sole purpose of programming logic devices manufactured by
+Intel and sold by Intel or its authorized distributors.  Please
+refer to the applicable agreement for further details.
+
+
+
++---------------------------------------------------------------+
+; Assembler Summary                                             ;
++-----------------------+---------------------------------------+
+; Assembler Status      ; Successful - Fri Nov 07 13:03:52 2025 ;
+; Revision Name         ; signal_adc_fsmc                       ;
+; Top-level Entity Name ; signal_adc_fsmc                       ;
+; Family                ; Cyclone 10 LP                         ;
+; Device                ; 10CL006YE144A7G                       ;
++-----------------------+---------------------------------------+
+
+
++----------------------------------+
+; Assembler Settings               ;
++--------+---------+---------------+
+; Option ; Setting ; Default Value ;
++--------+---------+---------------+
+
+
++---------------------------------------------------------------------+
+; Assembler Generated Files                                           ;
++---------------------------------------------------------------------+
+; File Name                                                           ;
++---------------------------------------------------------------------+
+; C:/FGPA/signal(15)/signal_adc_fsmc/output_files/signal_adc_fsmc.sof ;
+; C:/FGPA/signal(15)/signal_adc_fsmc/output_files/signal_adc_fsmc.rbf ;
++---------------------------------------------------------------------+
+
+
++-----------------------------------------------------------------------------------------------+
+; Assembler Device Options: C:/FGPA/signal(15)/signal_adc_fsmc/output_files/signal_adc_fsmc.sof ;
++----------------+------------------------------------------------------------------------------+
+; Option         ; Setting                                                                      ;
++----------------+------------------------------------------------------------------------------+
+; JTAG usercode  ; 0x0009CD56                                                                   ;
+; Checksum       ; 0x0009CD56                                                                   ;
++----------------+------------------------------------------------------------------------------+
+
+
++-----------------------------------------------------------------------------------------------+
+; Assembler Device Options: C:/FGPA/signal(15)/signal_adc_fsmc/output_files/signal_adc_fsmc.rbf ;
++---------------------+-------------------------------------------------------------------------+
+; Option              ; Setting                                                                 ;
++---------------------+-------------------------------------------------------------------------+
+; Raw Binary File     ;                                                                         ;
+;  Compression Ratio  ; 3                                                                       ;
++---------------------+-------------------------------------------------------------------------+
+
+
++--------------------+
+; Assembler Messages ;
++--------------------+
+Info: *******************************************************************
+Info: Running Quartus Prime Assembler
+    Info: Version 17.1.0 Build 590 10/25/2017 SJ Lite Edition
+    Info: Processing started: Fri Nov 07 13:03:51 2025
+Info: Command: quartus_asm --read_settings_files=off --write_settings_files=off signal_adc_fsmc -c signal_adc_fsmc
+Info (115031): Writing out detailed assembly data for power analysis
+Info (115030): Assembler is generating device programming files
+Info: Quartus Prime Assembler was successful. 0 errors, 0 warnings
+    Info: Peak virtual memory: 4668 megabytes
+    Info: Processing ended: Fri Nov 07 13:03:52 2025
+    Info: Elapsed time: 00:00:01
+    Info: Total CPU time (on all processors): 00:00:01
+
+
