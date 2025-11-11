@@ -7,51 +7,51 @@ Idx Name          Size      VMA       LMA       File off  Algn
                   CONTENTS, ALLOC, LOAD, READONLY, DATA
   1 .text         000131c4  08000190  08000190  00001190  2**4
                   CONTENTS, ALLOC, LOAD, READONLY, CODE
-  2 .rodata       0005a748  08013358  08013358  00014358  2**3
+  2 .rodata       0001b7a8  08013358  08013358  00014358  2**3
                   CONTENTS, ALLOC, LOAD, READONLY, DATA
-  3 .ARM.extab    00000000  0806daa0  0806daa0  0006f2d0  2**0
+  3 .ARM.extab    00000000  0802eb00  0802eb00  000302d0  2**0
                   CONTENTS, READONLY
-  4 .ARM          00000008  0806daa0  0806daa0  0006eaa0  2**2
+  4 .ARM          00000008  0802eb00  0802eb00  0002fb00  2**2
                   CONTENTS, ALLOC, LOAD, READONLY, DATA
-  5 .preinit_array 00000000  0806daa8  0806daa8  0006f2d0  2**0
+  5 .preinit_array 00000000  0802eb08  0802eb08  000302d0  2**0
                   CONTENTS, ALLOC, LOAD, DATA
-  6 .init_array   00000004  0806daa8  0806daa8  0006eaa8  2**2
+  6 .init_array   00000004  0802eb08  0802eb08  0002fb08  2**2
                   CONTENTS, ALLOC, LOAD, READONLY, DATA
-  7 .fini_array   00000004  0806daac  0806daac  0006eaac  2**2
+  7 .fini_array   00000004  0802eb0c  0802eb0c  0002fb0c  2**2
                   CONTENTS, ALLOC, LOAD, READONLY, DATA
-  8 .data         000002d0  20000000  0806dab0  0006f000  2**2
+  8 .data         000002d0  20000000  0802eb10  00030000  2**2
                   CONTENTS, ALLOC, LOAD, DATA
-  9 .ccmram       00000000  10000000  10000000  0006f2d0  2**0
+  9 .ccmram       00000000  10000000  10000000  000302d0  2**0
                   CONTENTS
- 10 .bss          0001a458  200002d0  200002d0  0006f2d0  2**2
+ 10 .bss          0001a458  200002d0  200002d0  000302d0  2**2
                   ALLOC
- 11 ._user_heap_stack 00000600  2001a728  2001a728  0006f2d0  2**0
+ 11 ._user_heap_stack 00000600  2001a728  2001a728  000302d0  2**0
                   ALLOC
- 12 .ARM.attributes 00000030  00000000  00000000  0006f2d0  2**0
+ 12 .ARM.attributes 00000030  00000000  00000000  000302d0  2**0
                   CONTENTS, READONLY
- 13 .debug_info   0002612e  00000000  00000000  0006f300  2**0
+ 13 .debug_info   0002612e  00000000  00000000  00030300  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 14 .debug_abbrev 00005c42  00000000  00000000  0009542e  2**0
+ 14 .debug_abbrev 00005c42  00000000  00000000  0005642e  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 15 .debug_aranges 00001e80  00000000  00000000  0009b070  2**3
+ 15 .debug_aranges 00001e80  00000000  00000000  0005c070  2**3
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 16 .debug_rnglists 000016da  00000000  00000000  0009cef0  2**0
+ 16 .debug_rnglists 000016da  00000000  00000000  0005def0  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 17 .debug_macro  00026165  00000000  00000000  0009e5ca  2**0
+ 17 .debug_macro  00026165  00000000  00000000  0005f5ca  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 18 .debug_line   00025051  00000000  00000000  000c472f  2**0
+ 18 .debug_line   00025052  00000000  00000000  0008572f  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 19 .debug_str    000d3e3e  00000000  00000000  000e9780  2**0
+ 19 .debug_str    000d3e3e  00000000  00000000  000aa781  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 20 .comment      000000bc  00000000  00000000  001bd5be  2**0
+ 20 .comment      000000bc  00000000  00000000  0017e5bf  2**0
                   CONTENTS, READONLY
- 21 .debug_frame  000098a0  00000000  00000000  001bd67c  2**2
+ 21 .debug_frame  000098a0  00000000  00000000  0017e67c  2**2
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 22 .debug_line_str 00000070  00000000  00000000  001c6f1c  2**0
+ 22 .debug_line_str 00000070  00000000  00000000  00187f1c  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 23 .debug_loc    00000e41  00000000  00000000  001c6f8c  2**0
+ 23 .debug_loc    00000e41  00000000  00000000  00187f8c  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 24 .debug_ranges 00000098  00000000  00000000  001c7dcd  2**0
+ 24 .debug_ranges 00000098  00000000  00000000  00188dcd  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
 
 Disassembly of section .text:
@@ -2902,7 +2902,7 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
  8001c34:	d9da      	bls.n	8001bec <ProcessUARTCommand+0x270>
                 }
             }
-           // PrintDataToUSB(i);
+            //PrintDataToUSB(i);
             fpga_data.data_ready = false;
  8001c36:	4b71      	ldr	r3, [pc, #452]	@ (8001dfc <ProcessUARTCommand+0x480>)
  8001c38:	f503 5300 	add.w	r3, r3, #8192	@ 0x2000
@@ -4689,7 +4689,7 @@ void FPGA_LoadConfig(void) {
  8002978:	40020000 	.word	0x40020000
  800297c:	40020400 	.word	0x40020400
  8002980:	08013804 	.word	0x08013804
- 8002984:	00059d8b 	.word	0x00059d8b
+ 8002984:	0001aded 	.word	0x0001aded
 
 08002988 <ReadFPGAData>:
 
@@ -9021,7 +9021,7 @@ LoopFillZerobss:
   ldr r1, =_edata
  80043f8:	200002d0 	.word	0x200002d0
   ldr r2, =_sidata
- 80043fc:	0806dab0 	.word	0x0806dab0
+ 80043fc:	0802eb10 	.word	0x0802eb10
   ldr r2, =_sbss
  8004400:	200002d0 	.word	0x200002d0
   ldr r4, =_ebss
@@ -16261,7 +16261,7 @@ HAL_StatusTypeDef HAL_RCC_ClockConfig(const RCC_ClkInitTypeDef  *RCC_ClkInitStru
  8006d56:	bf00      	nop
  8006d58:	40023c00 	.word	0x40023c00
  8006d5c:	40023800 	.word	0x40023800
- 8006d60:	0806d590 	.word	0x0806d590
+ 8006d60:	0802e5f4 	.word	0x0802e5f4
  8006d64:	20000008 	.word	0x20000008
  8006d68:	20000010 	.word	0x20000010
 
@@ -16565,7 +16565,7 @@ uint32_t HAL_RCC_GetPCLK1Freq(void)
  8006fac:	4618      	mov	r0, r3
  8006fae:	bd80      	pop	{r7, pc}
  8006fb0:	40023800 	.word	0x40023800
- 8006fb4:	0806d5a0 	.word	0x0806d5a0
+ 8006fb4:	0802e604 	.word	0x0802e604
 
 08006fb8 <HAL_RCC_GetPCLK2Freq>:
   * @note   Each time PCLK2 changes, this function must be called to update the
@@ -16591,7 +16591,7 @@ uint32_t HAL_RCC_GetPCLK2Freq(void)
  8006fd4:	4618      	mov	r0, r3
  8006fd6:	bd80      	pop	{r7, pc}
  8006fd8:	40023800 	.word	0x40023800
- 8006fdc:	0806d5a0 	.word	0x0806d5a0
+ 8006fdc:	0802e604 	.word	0x0802e604
 
 08006fe0 <HAL_SPI_Init>:
   * @param  hspi pointer to a SPI_HandleTypeDef structure that contains
@@ -35923,8 +35923,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  800e1f0:	615a      	str	r2, [r3, #20]
  800e1f2:	bd38      	pop	{r3, r4, r5, pc}
  800e1f4:	20000280 	.word	0x20000280
- 800e1f8:	0806d5a8 	.word	0x0806d5a8
- 800e1fc:	0806d5bf 	.word	0x0806d5bf
+ 800e1f8:	0802e60c 	.word	0x0802e60c
+ 800e1fc:	0802e623 	.word	0x0802e623
  800e200:	abcd330e 	.word	0xabcd330e
  800e204:	e66d1234 	.word	0xe66d1234
  800e208:	0005deec 	.word	0x0005deec
@@ -36229,8 +36229,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  800e4d0:	e782      	b.n	800e3d8 <_strtod_l+0x190>
  800e4d2:	f04f 0c01 	mov.w	ip, #1
  800e4d6:	e7f8      	b.n	800e4ca <_strtod_l+0x282>
- 800e4d8:	0806d860 	.word	0x0806d860
- 800e4dc:	0806d617 	.word	0x0806d617
+ 800e4d8:	0802e8c4 	.word	0x0802e8c4
+ 800e4dc:	0802e67b 	.word	0x0802e67b
  800e4e0:	7ff00000 	.word	0x7ff00000
  800e4e4:	9a19      	ldr	r2, [sp, #100]	@ 0x64
  800e4e6:	1c51      	adds	r1, r2, #1
@@ -36520,13 +36520,13 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  800e7bc:	f04f 0b00 	mov.w	fp, #0
  800e7c0:	6013      	str	r3, [r2, #0]
  800e7c2:	e76b      	b.n	800e69c <_strtod_l+0x454>
- 800e7c4:	0806d626 	.word	0x0806d626
- 800e7c8:	0806d84c 	.word	0x0806d84c
- 800e7cc:	0806d61e 	.word	0x0806d61e
- 800e7d0:	0806d6f1 	.word	0x0806d6f1
- 800e7d4:	0806d6ed 	.word	0x0806d6ed
- 800e7d8:	0806d9d8 	.word	0x0806d9d8
- 800e7dc:	0806d9b0 	.word	0x0806d9b0
+ 800e7c4:	0802e68a 	.word	0x0802e68a
+ 800e7c8:	0802e8b0 	.word	0x0802e8b0
+ 800e7cc:	0802e682 	.word	0x0802e682
+ 800e7d0:	0802e755 	.word	0x0802e755
+ 800e7d4:	0802e751 	.word	0x0802e751
+ 800e7d8:	0802ea38 	.word	0x0802ea38
+ 800e7dc:	0802ea10 	.word	0x0802ea10
  800e7e0:	7ff00000 	.word	0x7ff00000
  800e7e4:	7ca00000 	.word	0x7ca00000
  800e7e8:	7fefffff 	.word	0x7fefffff
@@ -36812,7 +36812,7 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  800ea96:	2322      	movs	r3, #34	@ 0x22
  800ea98:	6013      	str	r3, [r2, #0]
  800ea9a:	e603      	b.n	800e6a4 <_strtod_l+0x45c>
- 800ea9c:	0806d878 	.word	0x0806d878
+ 800ea9c:	0802e8d8 	.word	0x0802e8d8
  800eaa0:	fffffc02 	.word	0xfffffc02
  800eaa4:	39500000 	.word	0x39500000
  800eaa8:	7ff00000 	.word	0x7ff00000
@@ -37249,7 +37249,7 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  800ef1c:	d1f6      	bne.n	800ef0c <_strtol_l.isra.0+0xd8>
  800ef1e:	f8c8 1000 	str.w	r1, [r8]
  800ef22:	e794      	b.n	800ee4e <_strtol_l.isra.0+0x1a>
- 800ef24:	0806d8a1 	.word	0x0806d8a1
+ 800ef24:	0802e901 	.word	0x0802e901
 
 0800ef28 <_strtol_r>:
  800ef28:	f7ff bf84 	b.w	800ee34 <_strtol_l.isra.0>
@@ -37685,11 +37685,11 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  800f344:	e7ee      	b.n	800f324 <_printf_float+0x2a4>
  800f346:	bf00      	nop
  800f348:	7fefffff 	.word	0x7fefffff
- 800f34c:	0806d61d 	.word	0x0806d61d
- 800f350:	0806d619 	.word	0x0806d619
- 800f354:	0806d625 	.word	0x0806d625
- 800f358:	0806d621 	.word	0x0806d621
- 800f35c:	0806d844 	.word	0x0806d844
+ 800f34c:	0802e681 	.word	0x0802e681
+ 800f350:	0802e67d 	.word	0x0802e67d
+ 800f354:	0802e689 	.word	0x0802e689
+ 800f358:	0802e685 	.word	0x0802e685
+ 800f35c:	0802e8a8 	.word	0x0802e8a8
  800f360:	6da3      	ldr	r3, [r4, #88]	@ 0x58
  800f362:	f8dd a028 	ldr.w	sl, [sp, #40]	@ 0x28
  800f366:	4553      	cmp	r3, sl
@@ -38167,8 +38167,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  800f7dc:	2500      	movs	r5, #0
  800f7de:	f104 0619 	add.w	r6, r4, #25
  800f7e2:	e7f5      	b.n	800f7d0 <_printf_i+0x220>
- 800f7e4:	0806d629 	.word	0x0806d629
- 800f7e8:	0806d63a 	.word	0x0806d63a
+ 800f7e4:	0802e68d 	.word	0x0802e68d
+ 800f7e8:	0802e69e 	.word	0x0802e69e
 
 0800f7ec <_scanf_float>:
  800f7ec:	e92d 4ff0 	stmdb	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, lr}
@@ -38563,8 +38563,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  800fbfa:	2700      	movs	r7, #0
  800fbfc:	e62e      	b.n	800f85c <_scanf_float+0x70>
  800fbfe:	bf00      	nop
- 800fc00:	0806d64b 	.word	0x0806d64b
- 800fc04:	0806d6ed 	.word	0x0806d6ed
+ 800fc00:	0802e6af 	.word	0x0802e6af
+ 800fc04:	0802e751 	.word	0x0802e751
 
 0800fc08 <std>:
  800fc08:	2300      	movs	r3, #0
@@ -38999,8 +38999,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  800ffe8:	e8bd 41f0 	ldmia.w	sp!, {r4, r5, r6, r7, r8, lr}
  800ffec:	f000 b806 	b.w	800fffc <__strtok_r>
  800fff0:	20000280 	.word	0x20000280
- 800fff4:	0806d5a8 	.word	0x0806d5a8
- 800fff8:	0806d650 	.word	0x0806d650
+ 800fff4:	0802e60c 	.word	0x0802e60c
+ 800fff8:	0802e6b4 	.word	0x0802e6b4
 
 0800fffc <__strtok_r>:
  800fffc:	b5f0      	push	{r4, r5, r6, r7, lr}
@@ -39170,10 +39170,10 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  801014a:	4798      	blx	r3
  801014c:	3601      	adds	r6, #1
  801014e:	e7f2      	b.n	8010136 <__libc_init_array+0x1e>
- 8010150:	0806daa8 	.word	0x0806daa8
- 8010154:	0806daa8 	.word	0x0806daa8
- 8010158:	0806daa8 	.word	0x0806daa8
- 801015c:	0806daac 	.word	0x0806daac
+ 8010150:	0802eb08 	.word	0x0802eb08
+ 8010154:	0802eb08 	.word	0x0802eb08
+ 8010158:	0802eb08 	.word	0x0802eb08
+ 801015c:	0802eb0c 	.word	0x0802eb0c
 
 08010160 <__retarget_lock_init_recursive>:
  8010160:	4770      	bx	lr
@@ -39234,9 +39234,9 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  80101cc:	e7f3      	b.n	80101b6 <__assert_func+0x12>
  80101ce:	bf00      	nop
  80101d0:	20000280 	.word	0x20000280
- 80101d4:	0806d6b2 	.word	0x0806d6b2
- 80101d8:	0806d6bf 	.word	0x0806d6bf
- 80101dc:	0806d6ed 	.word	0x0806d6ed
+ 80101d4:	0802e716 	.word	0x0802e716
+ 80101d8:	0802e723 	.word	0x0802e723
+ 80101dc:	0802e751 	.word	0x0802e751
 
 080101e0 <quorem>:
  80101e0:	e92d 4ff7 	stmdb	sp!, {r0, r1, r2, r4, r5, r6, r7, r8, r9, sl, fp, lr}
@@ -39621,15 +39621,15 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  80105b4:	3fc68a28 	.word	0x3fc68a28
  80105b8:	509f79fb 	.word	0x509f79fb
  80105bc:	3fd34413 	.word	0x3fd34413
- 80105c0:	0806d5a8 	.word	0x0806d5a8
- 80105c4:	0806d6fb 	.word	0x0806d6fb
+ 80105c0:	0802e60c 	.word	0x0802e60c
+ 80105c4:	0802e75f 	.word	0x0802e75f
  80105c8:	7ff00000 	.word	0x7ff00000
- 80105cc:	0806d845 	.word	0x0806d845
+ 80105cc:	0802e8a9 	.word	0x0802e8a9
  80105d0:	3ff80000 	.word	0x3ff80000
- 80105d4:	0806d9d8 	.word	0x0806d9d8
- 80105d8:	0806d753 	.word	0x0806d753
- 80105dc:	0806d6f7 	.word	0x0806d6f7
- 80105e0:	0806d844 	.word	0x0806d844
+ 80105d4:	0802ea38 	.word	0x0802ea38
+ 80105d8:	0802e7b7 	.word	0x0802e7b7
+ 80105dc:	0802e75b 	.word	0x0802e75b
+ 80105e0:	0802e8a8 	.word	0x0802e8a8
  80105e4:	f8d9 301c 	ldr.w	r3, [r9, #28]
  80105e8:	6018      	str	r0, [r3, #0]
  80105ea:	9b03      	ldr	r3, [sp, #12]
@@ -39858,8 +39858,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  8010868:	e9cd 0104 	strd	r0, r1, [sp, #16]
  801086c:	e7c4      	b.n	80107f8 <_dtoa_r+0x508>
  801086e:	bf00      	nop
- 8010870:	0806d9d8 	.word	0x0806d9d8
- 8010874:	0806d9b0 	.word	0x0806d9b0
+ 8010870:	0802ea38 	.word	0x0802ea38
+ 8010874:	0802ea10 	.word	0x0802ea10
  8010878:	3ff00000 	.word	0x3ff00000
  801087c:	40240000 	.word	0x40240000
  8010880:	401c0000 	.word	0x401c0000
@@ -40488,8 +40488,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  8010e80:	f000 fcb4 	bl	80117ec <__multadd>
  8010e84:	9002      	str	r0, [sp, #8]
  8010e86:	e7eb      	b.n	8010e60 <_dtoa_r+0xb70>
- 8010e88:	0806d753 	.word	0x0806d753
- 8010e8c:	0806d6ee 	.word	0x0806d6ee
+ 8010e88:	0802e7b7 	.word	0x0802e7b7
+ 8010e8c:	0802e752 	.word	0x0802e752
 
 08010e90 <_free_r>:
  8010e90:	b538      	push	{r3, r4, r5, lr}
@@ -40929,9 +40929,9 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  801129e:	2b00      	cmp	r3, #0
  80112a0:	d1dd      	bne.n	801125e <__gethex+0x26a>
  80112a2:	e7ee      	b.n	8011282 <__gethex+0x28e>
- 80112a4:	0806d617 	.word	0x0806d617
- 80112a8:	0806d753 	.word	0x0806d753
- 80112ac:	0806d764 	.word	0x0806d764
+ 80112a4:	0802e67b 	.word	0x0802e67b
+ 80112a8:	0802e7b7 	.word	0x0802e7b7
+ 80112ac:	0802e7c8 	.word	0x0802e7c8
  80112b0:	1e6f      	subs	r7, r5, #1
  80112b2:	f1b9 0f00 	cmp.w	r9, #0
  80112b6:	d130      	bne.n	801131a <__gethex+0x326>
@@ -41066,7 +41066,7 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  801140a:	42b0      	cmp	r0, r6
  801140c:	dbe7      	blt.n	80113de <__gethex+0x3ea>
  801140e:	e7f0      	b.n	80113f2 <__gethex+0x3fe>
- 8011410:	0806d753 	.word	0x0806d753
+ 8011410:	0802e7b7 	.word	0x0802e7b7
 
 08011414 <L_shift>:
  8011414:	f1c2 0208 	rsb	r2, r2, #8
@@ -41465,8 +41465,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  8011798:	e9c0 3303 	strd	r3, r3, [r0, #12]
  801179c:	e7f7      	b.n	801178e <_Balloc+0x66>
  801179e:	bf00      	nop
- 80117a0:	0806d5a8 	.word	0x0806d5a8
- 80117a4:	0806d7c4 	.word	0x0806d7c4
+ 80117a0:	0802e60c 	.word	0x0802e60c
+ 80117a4:	0802e828 	.word	0x0802e828
 
 080117a8 <_Bfree>:
  80117a8:	b570      	push	{r4, r5, r6, lr}
@@ -41494,8 +41494,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  80117dc:	6021      	str	r1, [r4, #0]
  80117de:	f843 4022 	str.w	r4, [r3, r2, lsl #2]
  80117e2:	bd70      	pop	{r4, r5, r6, pc}
- 80117e4:	0806d5a8 	.word	0x0806d5a8
- 80117e8:	0806d7c4 	.word	0x0806d7c4
+ 80117e4:	0802e60c 	.word	0x0802e60c
+ 80117e8:	0802e828 	.word	0x0802e828
 
 080117ec <__multadd>:
  80117ec:	e92d 41f0 	stmdb	sp!, {r4, r5, r6, r7, r8, lr}
@@ -41549,8 +41549,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  8011868:	6125      	str	r5, [r4, #16]
  801186a:	4620      	mov	r0, r4
  801186c:	e8bd 81f0 	ldmia.w	sp!, {r4, r5, r6, r7, r8, pc}
- 8011870:	0806d753 	.word	0x0806d753
- 8011874:	0806d7c4 	.word	0x0806d7c4
+ 8011870:	0802e7b7 	.word	0x0802e7b7
+ 8011874:	0802e828 	.word	0x0802e828
 
 08011878 <__s2b>:
  8011878:	e92d 43f8 	stmdb	sp!, {r3, r4, r5, r6, r7, r8, r9, lr}
@@ -41611,8 +41611,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  80118fc:	f7ff ff76 	bl	80117ec <__multadd>
  8011900:	e7ee      	b.n	80118e0 <__s2b+0x68>
  8011902:	bf00      	nop
- 8011904:	0806d753 	.word	0x0806d753
- 8011908:	0806d7c4 	.word	0x0806d7c4
+ 8011904:	0802e7b7 	.word	0x0802e7b7
+ 8011908:	0802e828 	.word	0x0802e828
 
 0801190c <__hi0bits>:
  801190c:	f5b0 3f80 	cmp.w	r0, #65536	@ 0x10000
@@ -41702,8 +41702,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  80119c2:	6103      	str	r3, [r0, #16]
  80119c4:	bd10      	pop	{r4, pc}
  80119c6:	bf00      	nop
- 80119c8:	0806d753 	.word	0x0806d753
- 80119cc:	0806d7c4 	.word	0x0806d7c4
+ 80119c8:	0802e7b7 	.word	0x0802e7b7
+ 80119cc:	0802e828 	.word	0x0802e828
 
 080119d0 <__multiply>:
  80119d0:	e92d 4ff0 	stmdb	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, lr}
@@ -41822,8 +41822,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  8011b06:	e79f      	b.n	8011a48 <__multiply+0x78>
  8011b08:	3e01      	subs	r6, #1
  8011b0a:	e7a1      	b.n	8011a50 <__multiply+0x80>
- 8011b0c:	0806d753 	.word	0x0806d753
- 8011b10:	0806d7c4 	.word	0x0806d7c4
+ 8011b0c:	0802e7b7 	.word	0x0802e7b7
+ 8011b10:	0802e828 	.word	0x0802e828
 
 08011b14 <__pow5mult>:
  8011b14:	e92d 43f8 	stmdb	sp!, {r3, r4, r5, r6, r7, r8, r9, lr}
@@ -41891,9 +41891,9 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  8011bb4:	4630      	mov	r0, r6
  8011bb6:	e8bd 83f8 	ldmia.w	sp!, {r3, r4, r5, r6, r7, r8, r9, pc}
  8011bba:	bf00      	nop
- 8011bbc:	0806d9a4 	.word	0x0806d9a4
- 8011bc0:	0806d5a8 	.word	0x0806d5a8
- 8011bc4:	0806d7c4 	.word	0x0806d7c4
+ 8011bbc:	0802ea04 	.word	0x0802ea04
+ 8011bc0:	0802e60c 	.word	0x0802e60c
+ 8011bc4:	0802e828 	.word	0x0802e828
 
 08011bc8 <__lshift>:
  8011bc8:	e92d 47f0 	stmdb	sp!, {r4, r5, r6, r7, r8, r9, sl, lr}
@@ -41972,8 +41972,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  8011c92:	d8f9      	bhi.n	8011c88 <__lshift+0xc0>
  8011c94:	e7ea      	b.n	8011c6c <__lshift+0xa4>
  8011c96:	bf00      	nop
- 8011c98:	0806d753 	.word	0x0806d753
- 8011c9c:	0806d7c4 	.word	0x0806d7c4
+ 8011c98:	0802e7b7 	.word	0x0802e7b7
+ 8011c9c:	0802e828 	.word	0x0802e828
 
 08011ca0 <__mcmp>:
  8011ca0:	690a      	ldr	r2, [r1, #16]
@@ -42109,8 +42109,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  8011df2:	3f01      	subs	r7, #1
  8011df4:	e7e7      	b.n	8011dc6 <__mdiff+0xee>
  8011df6:	bf00      	nop
- 8011df8:	0806d753 	.word	0x0806d753
- 8011dfc:	0806d7c4 	.word	0x0806d7c4
+ 8011df8:	0802e7b7 	.word	0x0802e7b7
+ 8011dfc:	0802e828 	.word	0x0802e828
 
 08011e00 <__ulp>:
  8011e00:	b082      	sub	sp, #8
@@ -42260,8 +42260,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  8011f7e:	f7ff fcc5 	bl	801190c <__hi0bits>
  8011f82:	ebc0 1042 	rsb	r0, r0, r2, lsl #5
  8011f86:	e7e5      	b.n	8011f54 <__d2b+0x74>
- 8011f88:	0806d753 	.word	0x0806d753
- 8011f8c:	0806d7c4 	.word	0x0806d7c4
+ 8011f88:	0802e7b7 	.word	0x0802e7b7
+ 8011f8c:	0802e828 	.word	0x0802e828
 
 08011f90 <__ratio>:
  8011f90:	e92d 4ff0 	stmdb	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, lr}
@@ -42647,11 +42647,11 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  8012328:	4638      	mov	r0, r7
  801232a:	f7fd f941 	bl	800f5b0 <_printf_i>
  801232e:	e7ed      	b.n	801230c <_svfiprintf_r+0x1c0>
- 8012330:	0806d81d 	.word	0x0806d81d
- 8012334:	0806d827 	.word	0x0806d827
+ 8012330:	0802e881 	.word	0x0802e881
+ 8012334:	0802e88b 	.word	0x0802e88b
  8012338:	0800f081 	.word	0x0800f081
  801233c:	08012097 	.word	0x08012097
- 8012340:	0806d823 	.word	0x0806d823
+ 8012340:	0802e887 	.word	0x0802e887
 
 08012344 <_sungetc_r>:
  8012344:	b538      	push	{r3, r4, r5, lr}
@@ -43013,8 +43013,8 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  80126a2:	bf00      	nop
  80126a4:	08012345 	.word	0x08012345
  80126a8:	080123bf 	.word	0x080123bf
- 80126ac:	0806d8a1 	.word	0x0806d8a1
- 80126b0:	0806d823 	.word	0x0806d823
+ 80126ac:	0802e901 	.word	0x0802e901
+ 80126b0:	0802e887 	.word	0x0802e887
  80126b4:	4b0a      	ldr	r3, [pc, #40]	@ (80126e0 <__ssvfiscanf_r+0x2e8>)
  80126b6:	2b00      	cmp	r3, #0
  80126b8:	f43f aec6 	beq.w	8012448 <__ssvfiscanf_r+0x50>
@@ -43115,7 +43115,7 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  801278c:	2000      	movs	r0, #0
  801278e:	e8bd 83f8 	ldmia.w	sp!, {r3, r4, r5, r6, r7, r8, r9, pc}
  8012792:	bf00      	nop
- 8012794:	0806d8a1 	.word	0x0806d8a1
+ 8012794:	0802e901 	.word	0x0802e901
 
 08012798 <_scanf_i>:
  8012798:	e92d 4ff0 	stmdb	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, lr}
@@ -43312,7 +43312,7 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  8012970:	080137f8 	.word	0x080137f8
  8012974:	0800ef29 	.word	0x0800ef29
  8012978:	08012da9 	.word	0x08012da9
- 801297c:	0806d83e 	.word	0x0806d83e
+ 801297c:	0802e8a2 	.word	0x0802e8a2
 
 08012980 <__sflush_r>:
  8012980:	f9b1 200c 	ldrsh.w	r2, [r1, #12]
@@ -43776,7 +43776,7 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  8012d9e:	1e69      	subs	r1, r5, #1
  8012da0:	6011      	str	r1, [r2, #0]
  8012da2:	e7f5      	b.n	8012d90 <_strtoul_l.isra.0+0xc4>
- 8012da4:	0806d8a1 	.word	0x0806d8a1
+ 8012da4:	0802e901 	.word	0x0802e901
 
 08012da8 <_strtoul_r>:
  8012da8:	f7ff bf90 	b.w	8012ccc <_strtoul_l.isra.0>
@@ -44045,11 +44045,11 @@ USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status)
  8013014:	4630      	mov	r0, r6
  8013016:	f7fc facb 	bl	800f5b0 <_printf_i>
  801301a:	e7e4      	b.n	8012fe6 <_vfiprintf_r+0x1e6>
- 801301c:	0806d81d 	.word	0x0806d81d
- 8013020:	0806d827 	.word	0x0806d827
+ 801301c:	0802e881 	.word	0x0802e881
+ 8013020:	0802e88b 	.word	0x0802e88b
  8013024:	0800f081 	.word	0x0800f081
  8013028:	08012ddb 	.word	0x08012ddb
- 801302c:	0806d823 	.word	0x0806d823
+ 801302c:	0802e887 	.word	0x0802e887
 
 08013030 <__swbuf_r>:
  8013030:	b5f8      	push	{r3, r4, r5, r6, r7, lr}

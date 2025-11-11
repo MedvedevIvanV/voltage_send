@@ -1,0 +1,7 @@
+
+State Machine - |signal_adc_fsmc|state
+Name state.DONE state.CAPTURE_DATA state.GENERATE_SIGNALS state.IDLE 
+state.IDLE 0 0 0 0 
+state.GENERATE_SIGNALS 0 0 1 1 
+state.CAPTURE_DATA 0 1 0 1 
+state.DONE 1 0 0 1 

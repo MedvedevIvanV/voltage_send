@@ -18,7 +18,7 @@
 #include "sx126x_hal.h"
 #include "thickness_calculator.h"
 #include "temperature_sensor.h"
-#include "adc_plis.h" // Файл с конфигурацией ПЛИС (массив uint8_t fpga_config[])
+#include "signal123.h" // Файл с конфигурацией ПЛИС (массив uint8_t fpga_config[])
 #include "stm32f4xx_hal.h"
 /* USER CODE END Includes */
 
@@ -488,7 +488,7 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
                     HAL_Delay(10);
                 }
             }
-           // PrintDataToUSB(i);
+            //PrintDataToUSB(i);
             fpga_data.data_ready = false;
         }
 

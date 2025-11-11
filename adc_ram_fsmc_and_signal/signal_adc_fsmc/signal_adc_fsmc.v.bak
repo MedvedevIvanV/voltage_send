@@ -1,0 +1,113 @@
+module signal_adc_fsmc (
+    input clk_20mhz,
+    input START_FPGA,    
+    output ON_32,               // Импульс: 2000нс задержка, 200нс длительность
+    output CLK_P,               // Тактовый сигнал 80 МГц для АЦП
+    input [11:0] adc_data,
+    
+    // === Упрощенный FSMC Interface (только чтение) ===
+    input FPGA_OE,             // Аналог FSMC_NOE (активный низкий)
+    output [15:0] FSMC_D       // Шина данных (только вывод)
+);
+
+// --- PLL 20->80 МГц ---
+wire clk_80mhz;
+wire pll_locked;
+
+pll_20_to_80 pll_inst (
+    .inclk0(clk_20mhz),
+    .c0(clk_80mhz),
+    .locked(pll_locked)
+);
+
+assign CLK_P = clk_80mhz;
+
+// --- Двойная синхронизация START_FPGA ---
+reg [1:0] start_sync;
+always @(posedge clk_80mhz) begin
+    start_sync <= {start_sync[0], START_FPGA};
+end
+wire start_pulse = (start_sync == 2'b01);
+
+// --- Генератор импульсов ---
+reg [7:0] delay_counter;
+reg pulse_active;
+reg [3:0] pulse_width_cnt;
+
+// 2000нс задержка при 80МГц (160 тактов)
+// 200нс длительность (16 тактов)
+always @(posedge clk_80mhz) begin
+    if (start_pulse) begin
+        delay_counter <= 0;
+        pulse_active <= 0;
+    end 
+    else if (!pulse_active && delay_counter < 160) begin
+        delay_counter <= delay_counter + 1;
+    end
+    else if (!pulse_active) begin
+        pulse_active <= 1;
+        pulse_width_cnt <= 0;
+    end
+    else if (pulse_width_cnt < 15) begin
+        pulse_width_cnt <= pulse_width_cnt + 1;
+    end
+    else begin
+        pulse_active <= 0;
+    end
+end
+
+assign ON_32 = pulse_active;
+
+// --- Буфер на 10,000 значений ---
+reg [11:0] adc_buffer [0:9999];
+reg [15:0] sample_counter = 0; // 16 бит для 10,000 значений
+reg capture_done = 0;
+reg [15:0] capture_delay = 0;  // Счетчик задержки перед захватом
+reg capture_enable = 0;        // Флаг разрешения захвата
+
+// Захват данных с задержкой 1000 тактов после ON_32
+always @(posedge clk_80mhz) begin
+    if (start_pulse) begin
+        sample_counter <= 0;
+        capture_done <= 0;
+        capture_delay <= 0;
+        capture_enable <= 0;
+    end
+    else if (!capture_done) begin
+        if (pulse_active && !capture_enable) begin
+            // Начало отсчета задержки после появления ON_32
+            capture_delay <= capture_delay + 1;
+            
+            // После 1000 тактов разрешаем захват
+            if (capture_delay >= 999) begin
+                capture_enable <= 1;
+            end
+        end
+        else if (capture_enable && sample_counter < 10000) begin
+            // Захватываем данные только после задержки
+            adc_buffer[sample_counter] <= adc_data;
+            sample_counter <= sample_counter + 1;
+        end
+        else if (sample_counter >= 10000) begin
+            capture_done <= 1;
+        end
+    end
+end
+
+// --- Упрощенный интерфейс FSMC ---
+reg [15:0] read_ptr = 0;      // Указатель чтения
+
+// Управление чтением буфера и выходными данными
+always @(posedge clk_80mhz) begin
+    if (start_pulse) begin
+        read_ptr <= 0;
+    end
+    else if (capture_done && !FPGA_OE && read_ptr < 10000) begin
+        read_ptr <= read_ptr + 1;
+    end
+end
+
+// Назначение выходов
+assign FSMC_D = (!FPGA_OE && read_ptr < 10000) ? {4'b0000, adc_buffer[read_ptr]} : 16'h0000;
+
+endmodule
