@@ -1,11 +1,11 @@
 |signal_adc_fsmc
 clk_20mhz => clk_20mhz.IN1
-START_FPGA => start_sync[0].DATAIN
-EMA_PULSE_P << ema_pulse_p_reg.DB_MAX_OUTPUT_PORT_TYPE
-EMA_PULSE_N << ema_pulse_n_reg.DB_MAX_OUTPUT_PORT_TYPE
-ON_32 << on_32_reg.DB_MAX_OUTPUT_PORT_TYPE
-CTRL_SW << ctrl_sw_reg.DB_MAX_OUTPUT_PORT_TYPE
-CLK_P << pll_20_to_80:pll_inst.c0
+START_FPGA => start_sync.DATAA
+EMA_PULSE_P <= ema_pulse_p_reg.DB_MAX_OUTPUT_PORT_TYPE
+EMA_PULSE_N <= ema_pulse_n_reg.DB_MAX_OUTPUT_PORT_TYPE
+ON_32 <= on_32_reg.DB_MAX_OUTPUT_PORT_TYPE
+CTRL_SW <= ctrl_sw_reg.DB_MAX_OUTPUT_PORT_TYPE
+CLK_P <= pll_20_to_80:pll_inst.c0
 adc_data[0] => adc_buffer.data_a[0].DATAIN
 adc_data[0] => adc_buffer.DATAIN
 adc_data[1] => adc_buffer.data_a[1].DATAIN
@@ -30,24 +30,23 @@ adc_data[10] => adc_buffer.data_a[10].DATAIN
 adc_data[10] => adc_buffer.DATAIN10
 adc_data[11] => adc_buffer.data_a[11].DATAIN
 adc_data[11] => adc_buffer.DATAIN11
-FPGA_OE => FSMC_D.IN1
-FPGA_OE => always8.IN1
-FSMC_D[0] << FSMC_D.DB_MAX_OUTPUT_PORT_TYPE
-FSMC_D[1] << FSMC_D.DB_MAX_OUTPUT_PORT_TYPE
-FSMC_D[2] << FSMC_D.DB_MAX_OUTPUT_PORT_TYPE
-FSMC_D[3] << FSMC_D.DB_MAX_OUTPUT_PORT_TYPE
-FSMC_D[4] << FSMC_D.DB_MAX_OUTPUT_PORT_TYPE
-FSMC_D[5] << FSMC_D.DB_MAX_OUTPUT_PORT_TYPE
-FSMC_D[6] << FSMC_D.DB_MAX_OUTPUT_PORT_TYPE
-FSMC_D[7] << FSMC_D.DB_MAX_OUTPUT_PORT_TYPE
-FSMC_D[8] << FSMC_D.DB_MAX_OUTPUT_PORT_TYPE
-FSMC_D[9] << FSMC_D.DB_MAX_OUTPUT_PORT_TYPE
-FSMC_D[10] << FSMC_D.DB_MAX_OUTPUT_PORT_TYPE
-FSMC_D[11] << FSMC_D.DB_MAX_OUTPUT_PORT_TYPE
-FSMC_D[12] << <GND>
-FSMC_D[13] << <GND>
-FSMC_D[14] << <GND>
-FSMC_D[15] << <GND>
+FPGA_OE => always9.IN1
+FSMC_D[0] <= fsmc_data_out[0].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[1] <= fsmc_data_out[1].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[2] <= fsmc_data_out[2].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[3] <= fsmc_data_out[3].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[4] <= fsmc_data_out[4].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[5] <= fsmc_data_out[5].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[6] <= fsmc_data_out[6].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[7] <= fsmc_data_out[7].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[8] <= fsmc_data_out[8].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[9] <= fsmc_data_out[9].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[10] <= fsmc_data_out[10].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[11] <= fsmc_data_out[11].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[12] <= fsmc_data_out[12].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[13] <= fsmc_data_out[13].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[14] <= fsmc_data_out[14].DB_MAX_OUTPUT_PORT_TYPE
+FSMC_D[15] <= fsmc_data_out[15].DB_MAX_OUTPUT_PORT_TYPE
 
 
 |signal_adc_fsmc|pll_20_to_80:pll_inst

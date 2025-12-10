@@ -28,7 +28,11 @@ assign CLK_P = clk_80mhz;
 // ================== Синхронизация START_FPGA ==================
 reg [1:0] start_sync;
 always @(posedge clk_80mhz) begin
-    start_sync <= {start_sync[0], START_FPGA};
+    if (!pll_locked) begin
+        start_sync <= 2'b00;
+    end else begin
+        start_sync <= {start_sync[0], START_FPGA};
+    end
 end
 wire start_pulse = (start_sync == 2'b01);
 
@@ -65,7 +69,7 @@ always @(posedge clk_80mhz) begin
             24'd6400010: ema_pulse_p_reg <= 1;
             24'd6400023: ema_pulse_p_reg <= 0;
             24'd6400033: ema_pulse_p_reg <= 1;
-            default: ; // Сохраняем текущее значение
+            default: ema_pulse_p_reg <= ema_pulse_p_reg; // Явное указание сохранения значения
         endcase
     end else begin
         ema_pulse_p_reg <= 1;
@@ -84,7 +88,7 @@ always @(posedge clk_80mhz) begin
             24'd6400020: ema_pulse_n_reg <= 1;
             24'd6400033: ema_pulse_n_reg <= 0;
             24'd6400043: ema_pulse_n_reg <= 1;
-            default: ; // Сохраняем текущее значение
+            default: ema_pulse_n_reg <= ema_pulse_n_reg; // Явное указание сохранения значения
         endcase
     end else begin
         ema_pulse_n_reg <= 1;
@@ -111,80 +115,95 @@ always @(posedge clk_80mhz) begin
 end
 assign ON_32 = on_32_reg;
 
-// Генерация сигнала CTRL_SW
+// Генерация сигнала CTRL_SW - постоянно 0
 reg ctrl_sw_reg = 0;
 always @(posedge clk_80mhz) begin
     if (!pll_locked) begin
         ctrl_sw_reg <= 0;
-    end else if (measurement_active) begin
-        if (counter < 24'd6399999) begin
-            ctrl_sw_reg <= 0;
-        end else if (counter < 24'd6400203) begin
-            ctrl_sw_reg <= 1;
-        end else begin
-            ctrl_sw_reg <= 0;
-        end
     end else begin
-        ctrl_sw_reg <= 0;
+        ctrl_sw_reg <= 0; // Всегда устанавливаем в 0
     end
 end
 assign CTRL_SW = ctrl_sw_reg;
 
-// ================== Захват данных с АЦП ==================
-// Таймер старта захвата данных (через N тактов после START_FPGA)
-reg [15:0] start_capture_delay = 0;
-reg capture_enable = 0;
 
-// Задержка перед захватом (например, 5000 тактов = 62.5 мкс @ 80 МГц)
+// ================== Захват данных с АЦП ==================
+// Буфер на 15,000 значений (исправлено с 10,000 на 15,000 согласно коду)
+reg [11:0] adc_buffer [0:14999];
+reg [13:0] sample_counter = 0; // 14 бит достаточно для 15000
+reg capture_active = 0;
+reg capture_done = 0;
+
+// Флаг запуска захвата по достижении 6,400,000 тактов
+reg start_capture_flag = 0;
+
+// Управление запуском захвата данных (через 6,400,000 тактов)
 always @(posedge clk_80mhz) begin
-    if (start_pulse) begin
-        start_capture_delay <= 0;
-        capture_enable <= 0;
-    end 
-    else if (!capture_enable && start_capture_delay < 5000) begin
-        start_capture_delay <= start_capture_delay + 1;
-    end
-    else if (!capture_enable) begin
-        capture_enable <= 1;  // Разрешение захвата
+    if (!pll_locked) begin
+        start_capture_flag <= 0;
+    end else if (measurement_active && counter == 24'd6400000) begin
+        start_capture_flag <= 1; // Устанавливаем флаг запуска захвата
+    end else begin
+        start_capture_flag <= 0; // Сбрасываем флаг после одного такта
     end
 end
 
-// Буфер на 10,000 значений
-reg [11:0] adc_buffer [0:9999];
-reg [15:0] sample_counter = 0;
-reg capture_done = 0;
-reg buffer_overflow = 0;  // Флаг переполнения
-
+// Управление захватом данных
 always @(posedge clk_80mhz) begin
-    if (start_pulse) begin
+    if (!pll_locked) begin
         sample_counter <= 0;
+        capture_active <= 0;
         capture_done <= 0;
-        buffer_overflow <= 0;
-    end
-    else if (capture_enable && !capture_done) begin
-        if (sample_counter < 10000) begin
+    end else if (start_capture_flag) begin
+        sample_counter <= 0;
+        capture_active <= 1; // Начинаем захват при counter = 6,400,000
+        capture_done <= 0;
+    end else if (capture_active) begin
+        if (sample_counter < 15000) begin
             adc_buffer[sample_counter] <= adc_data;
             sample_counter <= sample_counter + 1;
-        end
-        else begin
-            buffer_overflow <= 1;  // Буфер переполнен!
-            capture_done <= 1;
+        end else begin
+            capture_active <= 0;
+            capture_done <= 1; // Захват завершен
         end
     end
 end
 
 // ================== FSMC Interface ==================
-reg [15:0] read_ptr = 0;
+reg [13:0] read_ptr = 0; // 14 бит для адресации 15000 значений
+reg [15:0] fsmc_data_out;
 
+// Управление указателем чтения
 always @(posedge clk_80mhz) begin
-    if (start_pulse) begin
+    if (!pll_locked) begin
         read_ptr <= 0;
-    end
-    else if (capture_done && !FPGA_OE && read_ptr < 10000) begin
-        read_ptr <= read_ptr + 1;
+    end else if (start_pulse) begin
+        read_ptr <= 0;
+    end else if (!FPGA_OE && capture_done) begin
+        if (read_ptr < 14999) begin
+            read_ptr <= read_ptr + 1;
+        end
+        // Не сбрасываем read_ptr, чтобы можно было читать данные многократно
     end
 end
 
-assign FSMC_D = (!FPGA_OE && read_ptr < 10000) ? {4'b0000, adc_buffer[read_ptr]} : 16'h0000;
+// Чтение из буфера
+always @(posedge clk_80mhz) begin
+    if (!pll_locked) begin
+        fsmc_data_out <= 16'h0000;
+    end else if (!FPGA_OE && capture_done && read_ptr < 15000) begin
+        fsmc_data_out <= {4'b0000, adc_buffer[read_ptr]};
+    end else begin
+        fsmc_data_out <= 16'h0000;
+    end
+end
+
+assign FSMC_D = fsmc_data_out;
+
+// ================== Debug Signals ==================
+// Можно добавить для отладки
+wire [13:0] debug_sample_count = sample_counter;
+wire debug_capture_active = capture_active;
+wire debug_capture_done = capture_done;
 
 endmodule

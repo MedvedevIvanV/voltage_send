@@ -1,5 +1,5 @@
 Analysis & Synthesis report for signal_adc_fsmc
-Tue Nov 11 14:56:32 2025
+Wed Dec 10 14:58:44 2025
 Quartus Prime Version 17.1.0 Build 590 10/25/2017 SJ Lite Edition
 
 
@@ -20,7 +20,7 @@ Quartus Prime Version 17.1.0 Build 590 10/25/2017 SJ Lite Edition
  12. Inverted Register Statistics
  13. Registers Added for RAM Pass-Through Logic
  14. Multiplexer Restructuring Statistics (Restructuring Performed)
- 15. Source assignments for altsyncram:adc_buffer_rtl_0|altsyncram_3oc1:auto_generated
+ 15. Source assignments for altsyncram:adc_buffer_rtl_0|altsyncram_58h1:auto_generated
  16. Parameter Settings for User Entity Instance: pll_20_to_80:pll_inst|altpll:altpll_component
  17. Parameter Settings for Inferred Entity Instance: altsyncram:adc_buffer_rtl_0
  18. altpll Parameter Settings by Entity Instance
@@ -54,18 +54,18 @@ refer to the applicable agreement for further details.
 +----------------------------------------------------------------------------------+
 ; Analysis & Synthesis Summary                                                     ;
 +------------------------------------+---------------------------------------------+
-; Analysis & Synthesis Status        ; Successful - Tue Nov 11 14:56:32 2025       ;
+; Analysis & Synthesis Status        ; Successful - Wed Dec 10 14:58:44 2025       ;
 ; Quartus Prime Version              ; 17.1.0 Build 590 10/25/2017 SJ Lite Edition ;
 ; Revision Name                      ; signal_adc_fsmc                             ;
 ; Top-level Entity Name              ; signal_adc_fsmc                             ;
 ; Family                             ; Cyclone 10 LP                               ;
-; Total logic elements               ; 231                                         ;
-;     Total combinational functions  ; 188                                         ;
-;     Dedicated logic registers      ; 123                                         ;
-; Total registers                    ; 123                                         ;
+; Total logic elements               ; 207                                         ;
+;     Total combinational functions  ; 166                                         ;
+;     Dedicated logic registers      ; 115                                         ;
+; Total registers                    ; 115                                         ;
 ; Total pins                         ; 36                                          ;
 ; Total virtual pins                 ; 0                                           ;
-; Total memory bits                  ; 120,000                                     ;
+; Total memory bits                  ; 180,000                                     ;
 ; Embedded Multiplier 9-bit elements ; 0                                           ;
 ; Total PLLs                         ; 1                                           ;
 +------------------------------------+---------------------------------------------+
@@ -180,14 +180,14 @@ refer to the applicable agreement for further details.
 +----------------------------------+-----------------+------------------------------+------------------------------------------------------------------------------+---------+
 ; File Name with User-Entered Path ; Used in Netlist ; File Type                    ; File Name with Absolute Path                                                 ; Library ;
 +----------------------------------+-----------------+------------------------------+------------------------------------------------------------------------------+---------+
-; signal_adc_fsmc.v                ; yes             ; User Verilog HDL File        ; C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/signal_adc_fsmc.v                   ;         ;
-; pll_20_to_80.v                   ; yes             ; User Wizard-Generated File   ; C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/pll_20_to_80.v                      ;         ;
+; signal_adc_fsmc.v                ; yes             ; User Verilog HDL File        ; C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v            ;         ;
+; pll_20_to_80.v                   ; yes             ; User Wizard-Generated File   ; C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/pll_20_to_80.v               ;         ;
 ; altpll.tdf                       ; yes             ; Megafunction                 ; c:/intelfpga_lite/17.1/quartus/libraries/megafunctions/altpll.tdf            ;         ;
 ; aglobal171.inc                   ; yes             ; Megafunction                 ; c:/intelfpga_lite/17.1/quartus/libraries/megafunctions/aglobal171.inc        ;         ;
 ; stratix_pll.inc                  ; yes             ; Megafunction                 ; c:/intelfpga_lite/17.1/quartus/libraries/megafunctions/stratix_pll.inc       ;         ;
 ; stratixii_pll.inc                ; yes             ; Megafunction                 ; c:/intelfpga_lite/17.1/quartus/libraries/megafunctions/stratixii_pll.inc     ;         ;
 ; cycloneii_pll.inc                ; yes             ; Megafunction                 ; c:/intelfpga_lite/17.1/quartus/libraries/megafunctions/cycloneii_pll.inc     ;         ;
-; db/pll_20_to_80_altpll.v         ; yes             ; Auto-Generated Megafunction  ; C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/db/pll_20_to_80_altpll.v            ;         ;
+; db/pll_20_to_80_altpll.v         ; yes             ; Auto-Generated Megafunction  ; C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/db/pll_20_to_80_altpll.v     ;         ;
 ; altsyncram.tdf                   ; yes             ; Megafunction                 ; c:/intelfpga_lite/17.1/quartus/libraries/megafunctions/altsyncram.tdf        ;         ;
 ; stratix_ram_block.inc            ; yes             ; Megafunction                 ; c:/intelfpga_lite/17.1/quartus/libraries/megafunctions/stratix_ram_block.inc ;         ;
 ; lpm_mux.inc                      ; yes             ; Megafunction                 ; c:/intelfpga_lite/17.1/quartus/libraries/megafunctions/lpm_mux.inc           ;         ;
@@ -196,10 +196,9 @@ refer to the applicable agreement for further details.
 ; altrom.inc                       ; yes             ; Megafunction                 ; c:/intelfpga_lite/17.1/quartus/libraries/megafunctions/altrom.inc            ;         ;
 ; altram.inc                       ; yes             ; Megafunction                 ; c:/intelfpga_lite/17.1/quartus/libraries/megafunctions/altram.inc            ;         ;
 ; altdpram.inc                     ; yes             ; Megafunction                 ; c:/intelfpga_lite/17.1/quartus/libraries/megafunctions/altdpram.inc          ;         ;
-; db/altsyncram_3oc1.tdf           ; yes             ; Auto-Generated Megafunction  ; C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/db/altsyncram_3oc1.tdf              ;         ;
-; db/decode_csa.tdf                ; yes             ; Auto-Generated Megafunction  ; C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/db/decode_csa.tdf                   ;         ;
-; db/decode_58a.tdf                ; yes             ; Auto-Generated Megafunction  ; C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/db/decode_58a.tdf                   ;         ;
-; db/mux_7ob.tdf                   ; yes             ; Auto-Generated Megafunction  ; C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/db/mux_7ob.tdf                      ;         ;
+; db/altsyncram_58h1.tdf           ; yes             ; Auto-Generated Megafunction  ; C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/db/altsyncram_58h1.tdf       ;         ;
+; db/decode_csa.tdf                ; yes             ; Auto-Generated Megafunction  ; C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/db/decode_csa.tdf            ;         ;
+; db/mux_7ob.tdf                   ; yes             ; Auto-Generated Megafunction  ; C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/db/mux_7ob.tdf               ;         ;
 +----------------------------------+-----------------+------------------------------+------------------------------------------------------------------------------+---------+
 
 
@@ -208,24 +207,24 @@ refer to the applicable agreement for further details.
 +---------------------------------------------+---------------------------------------------------------------------------------------------------+
 ; Resource                                    ; Usage                                                                                             ;
 +---------------------------------------------+---------------------------------------------------------------------------------------------------+
-; Estimated Total logic elements              ; 231                                                                                               ;
+; Estimated Total logic elements              ; 207                                                                                               ;
 ;                                             ;                                                                                                   ;
-; Total combinational functions               ; 188                                                                                               ;
+; Total combinational functions               ; 166                                                                                               ;
 ; Logic element usage by number of LUT inputs ;                                                                                                   ;
-;     -- 4 input functions                    ; 80                                                                                                ;
-;     -- 3 input functions                    ; 29                                                                                                ;
-;     -- <=2 input functions                  ; 79                                                                                                ;
+;     -- 4 input functions                    ; 83                                                                                                ;
+;     -- 3 input functions                    ; 24                                                                                                ;
+;     -- <=2 input functions                  ; 59                                                                                                ;
 ;                                             ;                                                                                                   ;
 ; Logic elements by mode                      ;                                                                                                   ;
-;     -- normal mode                          ; 120                                                                                               ;
-;     -- arithmetic mode                      ; 68                                                                                                ;
+;     -- normal mode                          ; 117                                                                                               ;
+;     -- arithmetic mode                      ; 49                                                                                                ;
 ;                                             ;                                                                                                   ;
-; Total registers                             ; 123                                                                                               ;
-;     -- Dedicated logic registers            ; 123                                                                                               ;
+; Total registers                             ; 115                                                                                               ;
+;     -- Dedicated logic registers            ; 115                                                                                               ;
 ;     -- I/O registers                        ; 0                                                                                                 ;
 ;                                             ;                                                                                                   ;
 ; I/O pins                                    ; 36                                                                                                ;
-; Total memory bits                           ; 120000                                                                                            ;
+; Total memory bits                           ; 180000                                                                                            ;
 ;                                             ;                                                                                                   ;
 ; Embedded Multiplier 9-bit elements          ; 0                                                                                                 ;
 ;                                             ;                                                                                                   ;
@@ -233,9 +232,9 @@ refer to the applicable agreement for further details.
 ;     -- PLLs                                 ; 1                                                                                                 ;
 ;                                             ;                                                                                                   ;
 ; Maximum fan-out node                        ; pll_20_to_80:pll_inst|altpll:altpll_component|pll_20_to_80_altpll:auto_generated|wire_pll1_clk[0] ;
-; Maximum fan-out                             ; 155                                                                                               ;
-; Total fan-out                               ; 1648                                                                                              ;
-; Average fan-out                             ; 4.04                                                                                              ;
+; Maximum fan-out                             ; 169                                                                                               ;
+; Total fan-out                               ; 1575                                                                                              ;
+; Average fan-out                             ; 4.17                                                                                              ;
 +---------------------------------------------+---------------------------------------------------------------------------------------------------+
 
 
@@ -244,10 +243,10 @@ refer to the applicable agreement for further details.
 +-----------------------------------------------+---------------------+---------------------------+-------------+--------------+---------+-----------+------+--------------+---------------------------------------------------------------------------------------------------+---------------------+--------------+
 ; Compilation Hierarchy Node                    ; Combinational ALUTs ; Dedicated Logic Registers ; Memory Bits ; DSP Elements ; DSP 9x9 ; DSP 18x18 ; Pins ; Virtual Pins ; Full Hierarchy Name                                                                               ; Entity Name         ; Library Name ;
 +-----------------------------------------------+---------------------+---------------------------+-------------+--------------+---------+-----------+------+--------------+---------------------------------------------------------------------------------------------------+---------------------+--------------+
-; |signal_adc_fsmc                              ; 188 (186)           ; 123 (122)                 ; 120000      ; 0            ; 0       ; 0         ; 36   ; 0            ; |signal_adc_fsmc                                                                                  ; signal_adc_fsmc     ; work         ;
-;    |altsyncram:adc_buffer_rtl_0|              ; 2 (0)               ; 1 (0)                     ; 120000      ; 0            ; 0       ; 0         ; 0    ; 0            ; |signal_adc_fsmc|altsyncram:adc_buffer_rtl_0                                                      ; altsyncram          ; work         ;
-;       |altsyncram_3oc1:auto_generated|        ; 2 (0)               ; 1 (1)                     ; 120000      ; 0            ; 0       ; 0         ; 0    ; 0            ; |signal_adc_fsmc|altsyncram:adc_buffer_rtl_0|altsyncram_3oc1:auto_generated                       ; altsyncram_3oc1     ; work         ;
-;          |decode_csa:decode2|                 ; 2 (2)               ; 0 (0)                     ; 0           ; 0            ; 0       ; 0         ; 0    ; 0            ; |signal_adc_fsmc|altsyncram:adc_buffer_rtl_0|altsyncram_3oc1:auto_generated|decode_csa:decode2    ; decode_csa          ; work         ;
+; |signal_adc_fsmc                              ; 166 (164)           ; 115 (114)                 ; 180000      ; 0            ; 0       ; 0         ; 36   ; 0            ; |signal_adc_fsmc                                                                                  ; signal_adc_fsmc     ; work         ;
+;    |altsyncram:adc_buffer_rtl_0|              ; 2 (0)               ; 1 (0)                     ; 180000      ; 0            ; 0       ; 0         ; 0    ; 0            ; |signal_adc_fsmc|altsyncram:adc_buffer_rtl_0                                                      ; altsyncram          ; work         ;
+;       |altsyncram_58h1:auto_generated|        ; 2 (0)               ; 1 (1)                     ; 180000      ; 0            ; 0       ; 0         ; 0    ; 0            ; |signal_adc_fsmc|altsyncram:adc_buffer_rtl_0|altsyncram_58h1:auto_generated                       ; altsyncram_58h1     ; work         ;
+;          |decode_csa:decode2|                 ; 2 (2)               ; 0 (0)                     ; 0           ; 0            ; 0       ; 0         ; 0    ; 0            ; |signal_adc_fsmc|altsyncram:adc_buffer_rtl_0|altsyncram_58h1:auto_generated|decode_csa:decode2    ; decode_csa          ; work         ;
 ;    |pll_20_to_80:pll_inst|                    ; 0 (0)               ; 0 (0)                     ; 0           ; 0            ; 0       ; 0         ; 0    ; 0            ; |signal_adc_fsmc|pll_20_to_80:pll_inst                                                            ; pll_20_to_80        ; work         ;
 ;       |altpll:altpll_component|               ; 0 (0)               ; 0 (0)                     ; 0           ; 0            ; 0       ; 0         ; 0    ; 0            ; |signal_adc_fsmc|pll_20_to_80:pll_inst|altpll:altpll_component                                    ; altpll              ; work         ;
 ;          |pll_20_to_80_altpll:auto_generated| ; 0 (0)               ; 0 (0)                     ; 0           ; 0            ; 0       ; 0         ; 0    ; 0            ; |signal_adc_fsmc|pll_20_to_80:pll_inst|altpll:altpll_component|pll_20_to_80_altpll:auto_generated ; pll_20_to_80_altpll ; work         ;
@@ -260,7 +259,7 @@ Note: For table entries with two numbers listed, the numbers in parentheses indi
 +-----------------------------------------------------------------------+------+------------------+--------------+--------------+--------------+--------------+--------+------+
 ; Name                                                                  ; Type ; Mode             ; Port A Depth ; Port A Width ; Port B Depth ; Port B Width ; Size   ; MIF  ;
 +-----------------------------------------------------------------------+------+------------------+--------------+--------------+--------------+--------------+--------+------+
-; altsyncram:adc_buffer_rtl_0|altsyncram_3oc1:auto_generated|ALTSYNCRAM ; AUTO ; Simple Dual Port ; 10000        ; 12           ; 10000        ; 12           ; 120000 ; None ;
+; altsyncram:adc_buffer_rtl_0|altsyncram_58h1:auto_generated|ALTSYNCRAM ; AUTO ; Simple Dual Port ; 15000        ; 12           ; 15000        ; 12           ; 180000 ; None ;
 +-----------------------------------------------------------------------+------+------------------+--------------+--------------+--------------+--------------+--------+------+
 
 
@@ -278,8 +277,11 @@ Note: For table entries with two numbers listed, the numbers in parentheses indi
 +------------------------------------------------------------------------------------------------+----------------------------------------+
 ; Register name                                                                                  ; Reason for Removal                     ;
 +------------------------------------------------------------------------------------------------+----------------------------------------+
+; fsmc_data_out[14,15]                                                                           ; Stuck at GND due to stuck port data_in ;
+; ctrl_sw_reg                                                                                    ; Stuck at GND due to stuck port data_in ;
+; fsmc_data_out[12,13]                                                                           ; Stuck at GND due to stuck port data_in ;
 ; pll_20_to_80:pll_inst|altpll:altpll_component|pll_20_to_80_altpll:auto_generated|pll_lock_sync ; Stuck at VCC due to stuck port data_in ;
-; Total Number of Removed Registers = 1                                                          ;                                        ;
+; Total Number of Removed Registers = 6                                                          ;                                        ;
 +------------------------------------------------------------------------------------------------+----------------------------------------+
 
 
@@ -288,12 +290,12 @@ Note: For table entries with two numbers listed, the numbers in parentheses indi
 +----------------------------------------------+-------+
 ; Statistic                                    ; Value ;
 +----------------------------------------------+-------+
-; Total registers                              ; 123   ;
-; Number of registers using Synchronous Clear  ; 56    ;
+; Total registers                              ; 115   ;
+; Number of registers using Synchronous Clear  ; 38    ;
 ; Number of registers using Synchronous Load   ; 0     ;
 ; Number of registers using Asynchronous Clear ; 0     ;
 ; Number of registers using Asynchronous Load  ; 0     ;
-; Number of registers using Clock Enable       ; 58    ;
+; Number of registers using Clock Enable       ; 38    ;
 ; Number of registers using Preset             ; 0     ;
 +----------------------------------------------+-------+
 
@@ -359,23 +361,21 @@ Note: For table entries with two numbers listed, the numbers in parentheses indi
 +-----------------------------+------------------+
 
 
-+-------------------------------------------------------------------------------------------------------------------------------------------------------+
-; Multiplexer Restructuring Statistics (Restructuring Performed)                                                                                        ;
-+--------------------+-----------+---------------+----------------------+------------------------+------------+-----------------------------------------+
-; Multiplexer Inputs ; Bus Width ; Baseline Area ; Area if Restructured ; Saving if Restructured ; Registered ; Example Multiplexer Output              ;
-+--------------------+-----------+---------------+----------------------+------------------------+------------+-----------------------------------------+
-; 3:1                ; 2 bits    ; 4 LEs         ; 2 LEs                ; 2 LEs                  ; Yes        ; |signal_adc_fsmc|read_ptr[15]           ;
-; 3:1                ; 16 bits   ; 32 LEs        ; 16 LEs               ; 16 LEs                 ; Yes        ; |signal_adc_fsmc|sample_counter[2]      ;
-; 3:1                ; 16 bits   ; 32 LEs        ; 16 LEs               ; 16 LEs                 ; Yes        ; |signal_adc_fsmc|start_capture_delay[4] ;
-; 5:1                ; 24 bits   ; 72 LEs        ; 24 LEs               ; 48 LEs                 ; Yes        ; |signal_adc_fsmc|counter[5]             ;
-; 3:1                ; 2 bits    ; 4 LEs         ; 2 LEs                ; 2 LEs                  ; Yes        ; |signal_adc_fsmc|ema_pulse_n_reg        ;
-; 3:1                ; 14 bits   ; 28 LEs        ; 28 LEs               ; 0 LEs                  ; No         ; |signal_adc_fsmc|read_ptr               ;
-; 3:1                ; 12 bits   ; 24 LEs        ; 24 LEs               ; 0 LEs                  ; No         ; |signal_adc_fsmc|FSMC_D                 ;
-+--------------------+-----------+---------------+----------------------+------------------------+------------+-----------------------------------------+
++--------------------------------------------------------------------------------------------------------------------------------------------------+
+; Multiplexer Restructuring Statistics (Restructuring Performed)                                                                                   ;
++--------------------+-----------+---------------+----------------------+------------------------+------------+------------------------------------+
+; Multiplexer Inputs ; Bus Width ; Baseline Area ; Area if Restructured ; Saving if Restructured ; Registered ; Example Multiplexer Output         ;
++--------------------+-----------+---------------+----------------------+------------------------+------------+------------------------------------+
+; 4:1                ; 14 bits   ; 28 LEs        ; 14 LEs               ; 14 LEs                 ; Yes        ; |signal_adc_fsmc|sample_counter[7] ;
+; 4:1                ; 12 bits   ; 24 LEs        ; 24 LEs               ; 0 LEs                  ; Yes        ; |signal_adc_fsmc|fsmc_data_out[6]  ;
+; 5:1                ; 24 bits   ; 72 LEs        ; 24 LEs               ; 48 LEs                 ; Yes        ; |signal_adc_fsmc|counter[16]       ;
+; 3:1                ; 2 bits    ; 4 LEs         ; 2 LEs                ; 2 LEs                  ; Yes        ; |signal_adc_fsmc|ema_pulse_n_reg   ;
+; 4:1                ; 14 bits   ; 28 LEs        ; 28 LEs               ; 0 LEs                  ; No         ; |signal_adc_fsmc|read_ptr          ;
++--------------------+-----------+---------------+----------------------+------------------------+------------+------------------------------------+
 
 
 +-----------------------------------------------------------------------------------+
-; Source assignments for altsyncram:adc_buffer_rtl_0|altsyncram_3oc1:auto_generated ;
+; Source assignments for altsyncram:adc_buffer_rtl_0|altsyncram_58h1:auto_generated ;
 +---------------------------------+--------------------+------+---------------------+
 ; Assignment                      ; Value              ; From ; To                  ;
 +---------------------------------+--------------------+------+---------------------+
@@ -771,7 +771,7 @@ Note: In order to hide this table in the UI and the text report file, please set
 ; OPERATION_MODE                     ; DUAL_PORT            ; Untyped          ;
 ; WIDTH_A                            ; 12                   ; Untyped          ;
 ; WIDTHAD_A                          ; 14                   ; Untyped          ;
-; NUMWORDS_A                         ; 10000                ; Untyped          ;
+; NUMWORDS_A                         ; 15000                ; Untyped          ;
 ; OUTDATA_REG_A                      ; UNREGISTERED         ; Untyped          ;
 ; ADDRESS_ACLR_A                     ; NONE                 ; Untyped          ;
 ; OUTDATA_ACLR_A                     ; NONE                 ; Untyped          ;
@@ -780,7 +780,7 @@ Note: In order to hide this table in the UI and the text report file, please set
 ; BYTEENA_ACLR_A                     ; NONE                 ; Untyped          ;
 ; WIDTH_B                            ; 12                   ; Untyped          ;
 ; WIDTHAD_B                          ; 14                   ; Untyped          ;
-; NUMWORDS_B                         ; 10000                ; Untyped          ;
+; NUMWORDS_B                         ; 15000                ; Untyped          ;
 ; INDATA_REG_B                       ; CLOCK1               ; Untyped          ;
 ; WRCONTROL_WRADDRESS_REG_B          ; CLOCK1               ; Untyped          ;
 ; RDCONTROL_REG_B                    ; CLOCK1               ; Untyped          ;
@@ -797,7 +797,7 @@ Note: In order to hide this table in the UI and the text report file, please set
 ; WIDTH_BYTEENA_B                    ; 1                    ; Untyped          ;
 ; RAM_BLOCK_TYPE                     ; AUTO                 ; Untyped          ;
 ; BYTE_SIZE                          ; 8                    ; Untyped          ;
-; READ_DURING_WRITE_MODE_MIXED_PORTS ; DONT_CARE            ; Untyped          ;
+; READ_DURING_WRITE_MODE_MIXED_PORTS ; OLD_DATA             ; Untyped          ;
 ; READ_DURING_WRITE_MODE_PORT_A      ; NEW_DATA_NO_NBE_READ ; Untyped          ;
 ; READ_DURING_WRITE_MODE_PORT_B      ; NEW_DATA_NO_NBE_READ ; Untyped          ;
 ; INIT_FILE                          ; UNUSED               ; Untyped          ;
@@ -813,7 +813,7 @@ Note: In order to hide this table in the UI and the text report file, please set
 ; ECC_PIPELINE_STAGE_ENABLED         ; FALSE                ; Untyped          ;
 ; WIDTH_ECCSTATUS                    ; 3                    ; Untyped          ;
 ; DEVICE_FAMILY                      ; Cyclone 10 LP        ; Untyped          ;
-; CBXI_PARAMETER                     ; altsyncram_3oc1      ; Untyped          ;
+; CBXI_PARAMETER                     ; altsyncram_58h1      ; Untyped          ;
 +------------------------------------+----------------------+------------------+
 Note: In order to hide this table in the UI and the text report file, please set the "Show Parameter Settings in Synthesis Report" option in "Analysis and Synthesis Settings -> More Settings" to "Off".
 
@@ -844,14 +844,14 @@ Note: In order to hide this table in the UI and the text report file, please set
 ; Entity Instance                           ; altsyncram:adc_buffer_rtl_0 ;
 ;     -- OPERATION_MODE                     ; DUAL_PORT                   ;
 ;     -- WIDTH_A                            ; 12                          ;
-;     -- NUMWORDS_A                         ; 10000                       ;
+;     -- NUMWORDS_A                         ; 15000                       ;
 ;     -- OUTDATA_REG_A                      ; UNREGISTERED                ;
 ;     -- WIDTH_B                            ; 12                          ;
-;     -- NUMWORDS_B                         ; 10000                       ;
+;     -- NUMWORDS_B                         ; 15000                       ;
 ;     -- ADDRESS_REG_B                      ; CLOCK0                      ;
 ;     -- OUTDATA_REG_B                      ; UNREGISTERED                ;
 ;     -- RAM_BLOCK_TYPE                     ; AUTO                        ;
-;     -- READ_DURING_WRITE_MODE_MIXED_PORTS ; DONT_CARE                   ;
+;     -- READ_DURING_WRITE_MODE_MIXED_PORTS ; OLD_DATA                    ;
 +-------------------------------------------+-----------------------------+
 
 
@@ -870,24 +870,24 @@ Note: In order to hide this table in the UI and the text report file, please set
 ; Type                  ; Count                       ;
 +-----------------------+-----------------------------+
 ; boundary_port         ; 36                          ;
-; cycloneiii_ff         ; 123                         ;
-;     ENA               ; 2                           ;
-;     ENA SCLR          ; 56                          ;
-;     plain             ; 65                          ;
-; cycloneiii_lcell_comb ; 192                         ;
-;     arith             ; 68                          ;
-;         2 data inputs ; 68                          ;
-;     normal            ; 124                         ;
+; cycloneiii_ff         ; 115                         ;
+;     ENA SCLR          ; 38                          ;
+;     plain             ; 77                          ;
+; cycloneiii_lcell_comb ; 170                         ;
+;     arith             ; 49                          ;
+;         2 data inputs ; 48                          ;
+;         3 data inputs ; 1                           ;
+;     normal            ; 121                         ;
 ;         0 data inputs ; 1                           ;
-;         1 data inputs ; 7                           ;
-;         2 data inputs ; 7                           ;
-;         3 data inputs ; 29                          ;
-;         4 data inputs ; 80                          ;
+;         1 data inputs ; 6                           ;
+;         2 data inputs ; 8                           ;
+;         3 data inputs ; 23                          ;
+;         4 data inputs ; 83                          ;
 ; cycloneiii_pll        ; 1                           ;
 ; cycloneiii_ram_block  ; 24                          ;
 ;                       ;                             ;
-; Max LUT depth         ; 6.00                        ;
-; Average LUT depth     ; 3.16                        ;
+; Max LUT depth         ; 6.30                        ;
+; Average LUT depth     ; 3.35                        ;
 +-----------------------+-----------------------------+
 
 
@@ -906,22 +906,23 @@ Note: In order to hide this table in the UI and the text report file, please set
 Info: *******************************************************************
 Info: Running Quartus Prime Analysis & Synthesis
     Info: Version 17.1.0 Build 590 10/25/2017 SJ Lite Edition
-    Info: Processing started: Tue Nov 11 14:56:10 2025
+    Info: Processing started: Wed Dec 10 14:58:21 2025
 Info: Command: quartus_map --read_settings_files=on --write_settings_files=off signal_adc_fsmc -c signal_adc_fsmc
 Info (20032): Parallel compilation is enabled and will use up to 2 processors
 Info (12021): Found 1 design units, including 1 entities, in source file signal_adc_fsmc.v
-    Info (12023): Found entity 1: signal_adc_fsmc File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/signal_adc_fsmc.v Line: 1
+    Info (12023): Found entity 1: signal_adc_fsmc File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 1
 Info (12021): Found 1 design units, including 1 entities, in source file pll_20_to_80.v
-    Info (12023): Found entity 1: pll_20_to_80 File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/pll_20_to_80.v Line: 39
+    Info (12023): Found entity 1: pll_20_to_80 File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/pll_20_to_80.v Line: 39
 Info (12127): Elaborating entity "signal_adc_fsmc" for the top level hierarchy
-Warning (10036): Verilog HDL or VHDL warning at signal_adc_fsmc.v(156): object "buffer_overflow" assigned a value but never read File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/signal_adc_fsmc.v Line: 156
-Warning (10230): Verilog HDL assignment warning at signal_adc_fsmc.v(145): truncated value with size 32 to match size of target (16) File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/signal_adc_fsmc.v Line: 145
-Warning (10230): Verilog HDL assignment warning at signal_adc_fsmc.v(167): truncated value with size 32 to match size of target (16) File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/signal_adc_fsmc.v Line: 167
-Warning (10230): Verilog HDL assignment warning at signal_adc_fsmc.v(184): truncated value with size 32 to match size of target (16) File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/signal_adc_fsmc.v Line: 184
-Info (12128): Elaborating entity "pll_20_to_80" for hierarchy "pll_20_to_80:pll_inst" File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/signal_adc_fsmc.v Line: 24
-Info (12128): Elaborating entity "altpll" for hierarchy "pll_20_to_80:pll_inst|altpll:altpll_component" File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/pll_20_to_80.v Line: 103
-Info (12130): Elaborated megafunction instantiation "pll_20_to_80:pll_inst|altpll:altpll_component" File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/pll_20_to_80.v Line: 103
-Info (12133): Instantiated megafunction "pll_20_to_80:pll_inst|altpll:altpll_component" with the following parameter: File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/pll_20_to_80.v Line: 103
+Warning (10036): Verilog HDL or VHDL warning at signal_adc_fsmc.v(205): object "debug_sample_count" assigned a value but never read File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 205
+Warning (10036): Verilog HDL or VHDL warning at signal_adc_fsmc.v(206): object "debug_capture_active" assigned a value but never read File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 206
+Warning (10036): Verilog HDL or VHDL warning at signal_adc_fsmc.v(207): object "debug_capture_done" assigned a value but never read File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 207
+Warning (10230): Verilog HDL assignment warning at signal_adc_fsmc.v(164): truncated value with size 32 to match size of target (14) File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 164
+Warning (10230): Verilog HDL assignment warning at signal_adc_fsmc.v(184): truncated value with size 32 to match size of target (14) File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 184
+Info (12128): Elaborating entity "pll_20_to_80" for hierarchy "pll_20_to_80:pll_inst" File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 24
+Info (12128): Elaborating entity "altpll" for hierarchy "pll_20_to_80:pll_inst|altpll:altpll_component" File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/pll_20_to_80.v Line: 103
+Info (12130): Elaborated megafunction instantiation "pll_20_to_80:pll_inst|altpll:altpll_component" File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/pll_20_to_80.v Line: 103
+Info (12133): Instantiated megafunction "pll_20_to_80:pll_inst|altpll:altpll_component" with the following parameter: File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/pll_20_to_80.v Line: 103
     Info (12134): Parameter "bandwidth_type" = "AUTO"
     Info (12134): Parameter "clk0_divide_by" = "1"
     Info (12134): Parameter "clk0_duty_cycle" = "50"
@@ -978,7 +979,7 @@ Info (12133): Instantiated megafunction "pll_20_to_80:pll_inst|altpll:altpll_com
     Info (12134): Parameter "self_reset_on_loss_lock" = "OFF"
     Info (12134): Parameter "width_clock" = "5"
 Info (12021): Found 1 design units, including 1 entities, in source file db/pll_20_to_80_altpll.v
-    Info (12023): Found entity 1: pll_20_to_80_altpll File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/db/pll_20_to_80_altpll.v Line: 30
+    Info (12023): Found entity 1: pll_20_to_80_altpll File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/db/pll_20_to_80_altpll.v Line: 30
 Info (12128): Elaborating entity "pll_20_to_80_altpll" for hierarchy "pll_20_to_80:pll_inst|altpll:altpll_component|pll_20_to_80_altpll:auto_generated" File: c:/intelfpga_lite/17.1/quartus/libraries/megafunctions/altpll.tdf Line: 897
 Warning (276020): Inferred RAM node "adc_buffer_rtl_0" from synchronous design logic.  Pass-through logic has been added to match the read-during-write behavior of the original design.
 Info (19000): Inferred 1 megafunctions from design logic
@@ -986,10 +987,10 @@ Info (19000): Inferred 1 megafunctions from design logic
         Info (286033): Parameter OPERATION_MODE set to DUAL_PORT
         Info (286033): Parameter WIDTH_A set to 12
         Info (286033): Parameter WIDTHAD_A set to 14
-        Info (286033): Parameter NUMWORDS_A set to 10000
+        Info (286033): Parameter NUMWORDS_A set to 15000
         Info (286033): Parameter WIDTH_B set to 12
         Info (286033): Parameter WIDTHAD_B set to 14
-        Info (286033): Parameter NUMWORDS_B set to 10000
+        Info (286033): Parameter NUMWORDS_B set to 15000
         Info (286033): Parameter ADDRESS_ACLR_A set to NONE
         Info (286033): Parameter OUTDATA_REG_B set to UNREGISTERED
         Info (286033): Parameter ADDRESS_ACLR_B set to NONE
@@ -997,15 +998,16 @@ Info (19000): Inferred 1 megafunctions from design logic
         Info (286033): Parameter ADDRESS_REG_B set to CLOCK0
         Info (286033): Parameter INDATA_ACLR_A set to NONE
         Info (286033): Parameter WRCONTROL_ACLR_A set to NONE
+        Info (286033): Parameter READ_DURING_WRITE_MODE_MIXED_PORTS set to OLD_DATA
 Info (12130): Elaborated megafunction instantiation "altsyncram:adc_buffer_rtl_0"
 Info (12133): Instantiated megafunction "altsyncram:adc_buffer_rtl_0" with the following parameter:
     Info (12134): Parameter "OPERATION_MODE" = "DUAL_PORT"
     Info (12134): Parameter "WIDTH_A" = "12"
     Info (12134): Parameter "WIDTHAD_A" = "14"
-    Info (12134): Parameter "NUMWORDS_A" = "10000"
+    Info (12134): Parameter "NUMWORDS_A" = "15000"
     Info (12134): Parameter "WIDTH_B" = "12"
     Info (12134): Parameter "WIDTHAD_B" = "14"
-    Info (12134): Parameter "NUMWORDS_B" = "10000"
+    Info (12134): Parameter "NUMWORDS_B" = "15000"
     Info (12134): Parameter "ADDRESS_ACLR_A" = "NONE"
     Info (12134): Parameter "OUTDATA_REG_B" = "UNREGISTERED"
     Info (12134): Parameter "ADDRESS_ACLR_B" = "NONE"
@@ -1013,33 +1015,33 @@ Info (12133): Instantiated megafunction "altsyncram:adc_buffer_rtl_0" with the f
     Info (12134): Parameter "ADDRESS_REG_B" = "CLOCK0"
     Info (12134): Parameter "INDATA_ACLR_A" = "NONE"
     Info (12134): Parameter "WRCONTROL_ACLR_A" = "NONE"
-Info (12021): Found 1 design units, including 1 entities, in source file db/altsyncram_3oc1.tdf
-    Info (12023): Found entity 1: altsyncram_3oc1 File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/db/altsyncram_3oc1.tdf Line: 33
+    Info (12134): Parameter "READ_DURING_WRITE_MODE_MIXED_PORTS" = "OLD_DATA"
+Info (12021): Found 1 design units, including 1 entities, in source file db/altsyncram_58h1.tdf
+    Info (12023): Found entity 1: altsyncram_58h1 File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/db/altsyncram_58h1.tdf Line: 31
 Info (12021): Found 1 design units, including 1 entities, in source file db/decode_csa.tdf
-    Info (12023): Found entity 1: decode_csa File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/db/decode_csa.tdf Line: 22
-Info (12021): Found 1 design units, including 1 entities, in source file db/decode_58a.tdf
-    Info (12023): Found entity 1: decode_58a File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/db/decode_58a.tdf Line: 22
+    Info (12023): Found entity 1: decode_csa File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/db/decode_csa.tdf Line: 22
 Info (12021): Found 1 design units, including 1 entities, in source file db/mux_7ob.tdf
-    Info (12023): Found entity 1: mux_7ob File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/db/mux_7ob.tdf Line: 22
+    Info (12023): Found entity 1: mux_7ob File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/db/mux_7ob.tdf Line: 22
 Warning (12241): 1 hierarchies have connectivity warnings - see the Connectivity Checks report folder
 Warning (13024): Output pins are stuck at VCC or GND
-    Warning (13410): Pin "FSMC_D[12]" is stuck at GND File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/signal_adc_fsmc.v Line: 14
-    Warning (13410): Pin "FSMC_D[13]" is stuck at GND File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/signal_adc_fsmc.v Line: 14
-    Warning (13410): Pin "FSMC_D[14]" is stuck at GND File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/signal_adc_fsmc.v Line: 14
-    Warning (13410): Pin "FSMC_D[15]" is stuck at GND File: C:/FGPA/adc_ram_fsmc(26)/signal_adc_fsmc/signal_adc_fsmc.v Line: 14
+    Warning (13410): Pin "CTRL_SW" is stuck at GND File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 7
+    Warning (13410): Pin "FSMC_D[12]" is stuck at GND File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 14
+    Warning (13410): Pin "FSMC_D[13]" is stuck at GND File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 14
+    Warning (13410): Pin "FSMC_D[14]" is stuck at GND File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 14
+    Warning (13410): Pin "FSMC_D[15]" is stuck at GND File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 14
 Info (286030): Timing-Driven Synthesis is running
 Info (16010): Generating hard_block partition "hard_block:auto_generated_inst"
     Info (16011): Adding 1 node(s), including 0 DDIO, 1 PLL, 0 transceiver and 0 LCELL
-Info (21057): Implemented 308 device resources after synthesis - the final resource count might be different
+Info (21057): Implemented 282 device resources after synthesis - the final resource count might be different
     Info (21058): Implemented 15 input pins
     Info (21059): Implemented 21 output pins
-    Info (21061): Implemented 247 logic cells
+    Info (21061): Implemented 221 logic cells
     Info (21064): Implemented 24 RAM segments
     Info (21065): Implemented 1 PLLs
-Info: Quartus Prime Analysis & Synthesis was successful. 0 errors, 11 warnings
-    Info: Peak virtual memory: 4751 megabytes
-    Info: Processing ended: Tue Nov 11 14:56:32 2025
-    Info: Elapsed time: 00:00:22
-    Info: Total CPU time (on all processors): 00:00:47
+Info: Quartus Prime Analysis & Synthesis was successful. 0 errors, 13 warnings
+    Info: Peak virtual memory: 4748 megabytes
+    Info: Processing ended: Wed Dec 10 14:58:44 2025
+    Info: Elapsed time: 00:00:23
+    Info: Total CPU time (on all processors): 00:00:49
 
 

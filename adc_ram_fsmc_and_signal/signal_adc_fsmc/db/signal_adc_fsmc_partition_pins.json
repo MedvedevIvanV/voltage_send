@@ -16,10 +16,6 @@
 					"strict" : false
 				},
 				{
-					"name" : "CTRL_SW",
-					"strict" : false
-				},
-				{
 					"name" : "FSMC_D[0]",
 					"strict" : false
 				},
