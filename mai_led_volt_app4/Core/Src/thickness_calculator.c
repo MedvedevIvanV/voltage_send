@@ -106,7 +106,7 @@ void InitializeParamSet(uint8_t set_number) {
     params[set_number].first_right_strobe = 120;
     params[set_number].second_left_strobe = 140;
     params[set_number].second_right_strobe = 240;
-    params[set_number].threshold = 2080.0f;
+    params[set_number].threshold = 9999.0f;
     params[set_number].threshold_zero_crossing = 600.0f;
     params[set_number].probe_length = 400;
     params[set_number].method = set_number; // Разные методы по умолчанию для разных наборов

@@ -18,8 +18,8 @@
 #include "sx126x_hal.h"
 #include "thickness_calculator.h"
 #include "temperature_sensor.h"
-#include "signal123.h" // Файл с конфигурацией ПЛИС (массив uint8_t fpga_config[])
 #include "stm32f4xx_hal.h"
+#include <not_adc_tact.h>  // Файл с конфигурацией ПЛИС (массив uint8_t fpga_config[])
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -53,7 +53,7 @@
 #define ACK_STRING           "ACK\r\n"
 #define COMPLETE_STRING      "COMPLETE\r\n"
 
-#define DATA_SIZE 5000       // Количество значений в ПЛИС
+#define DATA_SIZE 7000       // Количество значений в ПЛИС
 #define VALUES_PER_LINE 10            // Количество значений в строке вывода
 /* USER CODE END PD */
 
@@ -414,13 +414,13 @@ void SendDateTimeToBackupMCU(void) {
   * @param len Длина данных
   */
 void ProcessUARTCommand(uint8_t* data, uint8_t len) {
-    HAL_Delay(150);
-
-    // Загружаем конфигурацию ПЛИС
-    FPGA_LoadConfig();
-
-    // Уменьшаем дополнительную паузу
-    HAL_Delay(10);
+//    HAL_Delay(150);
+//
+//    // Загружаем конфигурацию ПЛИС
+//    FPGA_LoadConfig();
+//
+//    // Уменьшаем дополнительную паузу
+//    HAL_Delay(10);
 
     // Поиск всех параметров в данных
         char* date_ptr = strstr((char*)data, "DATE:");
@@ -468,8 +468,8 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
             }
 
         // Устанавливаем DAC напряжение для текущего набора параметров
-        Set_DAC_Voltage(params[i].gain);
-
+           Set_DAC_Voltage((uint32_t)params[i].gain);
+            //Set_DAC_Voltage(1212);
         // Читаем данные ПЛИС с текущими параметрами
         ReadFPGAData(i);
 
@@ -488,7 +488,7 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
                     HAL_Delay(10);
                 }
             }
-            //PrintDataToUSB(i);
+           PrintDataToUSB(i);
             fpga_data.data_ready = false;
         }
 
@@ -541,6 +541,93 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
 /**
   * @brief Отправка данных измерений через LoRa для конкретного набора параметров
   */
+bool InitializeLoRa(void) {
+    // Initialize radio context
+    radio.cs_port = sx1262_cs_port;
+    radio.cs_pin = sx1262_cs_pin;
+    radio.busy_port = sx1262_busy_port;
+    radio.busy_pin = sx1262_busy_pin;
+    radio.reset_port = sx1262_reset_port;
+    radio.reset_pin = sx1262_reset_pin;
+    radio.hspi = &hspi2;
+
+    lora_params.sf = SX126X_LORA_SF9;
+    lora_params.bw = SX126X_LORA_BW_125;
+    lora_params.cr = SX126X_LORA_CR_4_5;
+    lora_params.ldro = 0x00;
+
+    pkt_params.preamble_len_in_symb = 12;
+    pkt_params.header_type = SX126X_LORA_PKT_EXPLICIT;
+    pkt_params.pld_len_in_bytes = 128;
+    pkt_params.crc_is_on = 0x01;
+    pkt_params.invert_iq_is_on = 0x00;
+
+    pa_params.pa_duty_cycle = 0x04;
+    pa_params.hp_max = 0x07;
+    pa_params.device_sel = 0x00;
+    pa_params.pa_lut = 0x01;
+
+    pa_power = 20;
+    frequency = 868900000U;
+
+    sx126x_status_t status = sx126x_hal_reset(&radio);
+    if (status != SX126X_STATUS_OK) {
+        return false;
+    }
+
+    sx126x_hal_wakeup(&radio);
+    HAL_Delay(10);
+
+    sx126x_set_standby(&radio, SX126X_STANDBY_CFG_RC);
+    HAL_Delay(10);
+
+    sx126x_set_dio3_as_tcxo_ctrl(&radio, SX126X_TCXO_CTRL_2_4V, 5);
+    HAL_Delay(10);
+
+    sx126x_cal(&radio, 0xFF);
+    HAL_Delay(10);
+
+    sx126x_set_standby(&radio, SX126X_STANDBY_CFG_XOSC);
+    HAL_Delay(10);
+
+    sx126x_set_reg_mode(&radio, SX126X_REG_MODE_DCDC);
+    HAL_Delay(10);
+
+    sx126x_set_pkt_type(&radio, SX126X_PKT_TYPE_LORA);
+    HAL_Delay(10);
+
+    sx126x_set_lora_mod_params(&radio, &lora_params);
+    HAL_Delay(10);
+
+    sx126x_set_lora_pkt_params(&radio, &pkt_params);
+    HAL_Delay(10);
+
+    sx126x_set_lora_sync_word(&radio, 0x12);
+    HAL_Delay(10);
+
+    sx126x_set_rf_freq(&radio, frequency);
+    HAL_Delay(10);
+
+    sx126x_set_pa_cfg(&radio, &pa_params);
+    HAL_Delay(10);
+
+    sx126x_set_tx_params(&radio, pa_power, SX126X_RAMP_800_US);
+    HAL_Delay(10);
+
+    sx126x_set_buffer_base_address(&radio, 0x00, 0x00);
+    HAL_Delay(10);
+
+    sx126x_set_dio_irq_params(&radio,
+            SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE,
+            SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE,
+            SX126X_IRQ_NONE,
+            SX126X_IRQ_NONE);
+    HAL_Delay(100);
+
+    lora_initialized = true;
+    return true;
+}
+
 void SendMeasurementDataViaLoRa(int param_index) {
     // Формируем данные для отправки
     uint8_t lora_data[128] = {0};
@@ -700,93 +787,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 /**
   * @brief Инициализация модуля LoRa
   */
-bool InitializeLoRa(void) {
-    // Initialize radio context
-    radio.cs_port = sx1262_cs_port;
-    radio.cs_pin = sx1262_cs_pin;
-    radio.busy_port = sx1262_busy_port;
-    radio.busy_pin = sx1262_busy_pin;
-    radio.reset_port = sx1262_reset_port;
-    radio.reset_pin = sx1262_reset_pin;
-    radio.hspi = &hspi2;
-
-    lora_params.sf = SX126X_LORA_SF9;
-    lora_params.bw = SX126X_LORA_BW_125;
-    lora_params.cr = SX126X_LORA_CR_4_5;
-    lora_params.ldro = 0x00;
-
-    pkt_params.preamble_len_in_symb = 12;
-    pkt_params.header_type = SX126X_LORA_PKT_EXPLICIT;
-    pkt_params.pld_len_in_bytes = 128;
-    pkt_params.crc_is_on = 0x01;
-    pkt_params.invert_iq_is_on = 0x00;
-
-    pa_params.pa_duty_cycle = 0x04;
-    pa_params.hp_max = 0x07;
-    pa_params.device_sel = 0x00;
-    pa_params.pa_lut = 0x01;
-
-    pa_power = 20;
-    frequency = 868900000U;
-
-    sx126x_status_t status = sx126x_hal_reset(&radio);
-    if (status != SX126X_STATUS_OK) {
-        return false;
-    }
-
-    sx126x_hal_wakeup(&radio);
-    HAL_Delay(10);
-
-    sx126x_set_standby(&radio, SX126X_STANDBY_CFG_RC);
-    HAL_Delay(10);
-
-    sx126x_set_dio3_as_tcxo_ctrl(&radio, SX126X_TCXO_CTRL_2_4V, 5);
-    HAL_Delay(10);
-
-    sx126x_cal(&radio, 0xFF);
-    HAL_Delay(10);
-
-    sx126x_set_standby(&radio, SX126X_STANDBY_CFG_XOSC);
-    HAL_Delay(10);
-
-    sx126x_set_reg_mode(&radio, SX126X_REG_MODE_DCDC);
-    HAL_Delay(10);
-
-    sx126x_set_pkt_type(&radio, SX126X_PKT_TYPE_LORA);
-    HAL_Delay(10);
-
-    sx126x_set_lora_mod_params(&radio, &lora_params);
-    HAL_Delay(10);
-
-    sx126x_set_lora_pkt_params(&radio, &pkt_params);
-    HAL_Delay(10);
-
-    sx126x_set_lora_sync_word(&radio, 0x12);
-    HAL_Delay(10);
-
-    sx126x_set_rf_freq(&radio, frequency);
-    HAL_Delay(10);
-
-    sx126x_set_pa_cfg(&radio, &pa_params);
-    HAL_Delay(10);
-
-    sx126x_set_tx_params(&radio, pa_power, SX126X_RAMP_800_US);
-    HAL_Delay(10);
-
-    sx126x_set_buffer_base_address(&radio, 0x00, 0x00);
-    HAL_Delay(10);
-
-    sx126x_set_dio_irq_params(&radio,
-            SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE,
-            SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE,
-            SX126X_IRQ_NONE,
-            SX126X_IRQ_NONE);
-    HAL_Delay(100);
-
-    lora_initialized = true;
-    return true;
-}
-
 /**
   * @brief Отправка данных через LoRa
   */
@@ -830,32 +830,112 @@ void SendUARTResponse(const char* response)
 }
 
 /**
-  * @brief Вывод усредненных данных через USB CDC для конкретного набора параметров
-  */
+ * @brief Многократное чтение и усреднение данных из ПЛИС с проверкой порога для конкретного набора параметров
+ */
+void ReadFPGAData(int param_index) {
+   // Инициализация итогового массива нулями
+   memset(averaged_fpga_data, 0, sizeof(averaged_fpga_data));
+   averaging_complete = false;
+
+   // Получаем количество циклов из параметров текущего набора
+   uint32_t cycles = params[param_index].cycle_number;
+   float threshold = params[param_index].threshold;
+
+   if (cycles == 0) {
+       cycles = 1;
+   }
+
+   uint32_t valid_cycles = 0;
+
+   for (uint32_t cycle = 0; cycle < cycles; cycle++) {
+       // Генерируем START импульс для нового измерения
+       GenerateStartPulse();
+
+       // Ждем некоторое время для стабилизации ПЛИС
+       HAL_Delay(1);
+       bool threshold_exceeded = false;
+
+       // Читаем данные во временный буфер с проверкой порога
+       __disable_irq();
+
+       for (int i = 0; i < DATA_SIZE; i++) {
+
+           uint16_t value = fpga_reg[0];
+           uint16_t raw_value = value & 0x0FFF; // & 0x0FFF + 2048;
+
+
+           if ((abs((int16_t)raw_value)-2047) > threshold) {
+               threshold_exceeded = true;
+               __enable_irq();
+               break;
+           }
+
+           temp_fpga_buffer[i] = raw_value;
+           for(volatile int j = 0; j < 10; j++);
+       }
+
+       __enable_irq();
+
+       // Если порог превышен, пропускаем этот цикл
+       if (threshold_exceeded) {
+           continue;
+       }
+
+       // Усредняем данные только если цикл валидный
+       valid_cycles++;
+       for (int i = 0; i < DATA_SIZE; i++) {
+           if (valid_cycles == 1) {
+               averaged_fpga_data[i] = (float)temp_fpga_buffer[i] - 2047.0; //- 2089.0;
+           } else {
+              // averaged_fpga_data[i] = (averaged_fpga_data[i] * (valid_cycles - 1) + ((float)temp_fpga_buffer[i]- 2047.0)) / valid_cycles;
+        	   averaged_fpga_data[i] = (averaged_fpga_data[i] + ((float)temp_fpga_buffer[i]- 2047.0)) / 2;
+           }
+       }
+
+       HAL_Delay(10);
+   }
+
+   // Копируем усредненные данные в основную структуру только если есть валидные циклы
+   if (valid_cycles > 0) {
+       for (int i = 0; i < DATA_SIZE; i++) {
+           fpga_data.data[i] = (uint16_t)averaged_fpga_data[i];
+       }
+       fpga_data.data_count = DATA_SIZE;
+       fpga_data.data_ready = true;
+       averaging_complete = true;
+   } else {
+       fpga_data.data_ready = false;
+       averaging_complete = false;
+   }
+}
+
+/**
+ * @brief Вывод усредненных данных через USB CDC для конкретного набора параметров
+ */
 void PrintDataToUSB(int param_index) {
-    if (!fpga_data.data_ready) return;
+   if (!fpga_data.data_ready) return;
 
-    // Формируем заголовок с информацией об усреднении
-    snprintf(usb_msg, sizeof(usb_msg), "Averaged FPGA Data for params[%d] [%lu cycles, 0-%d]:\r\n",
-             param_index, params[param_index].cycle_number, DATA_SIZE-1);
-    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
-    HAL_Delay(10);
+   // Формируем заголовок с информацией об усреднении
+   snprintf(usb_msg, sizeof(usb_msg), "Averaged FPGA Data for params[%d] [%lu cycles, 0-%d]:\r\n",
+            param_index, params[param_index].cycle_number, DATA_SIZE-1);
+   CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+   HAL_Delay(10);
 
-    // Формируем строки с данными
-    char data_line[128] = "";
-    for (int i = 0; i < DATA_SIZE; i++) {
-        char val_str[12];
-        snprintf(val_str, sizeof(val_str), "%6.1f ", averaged_fpga_data[i]);
-        strncat(data_line, val_str, sizeof(data_line) - strlen(data_line) - 1);
+   // Формируем строки с данными
+   char data_line[128] = "";
+   for (int i = 0; i < DATA_SIZE; i++) {
+       char val_str[12];
+       snprintf(val_str, sizeof(val_str), "%6.1f ", averaged_fpga_data[i]);
+       strncat(data_line, val_str, sizeof(data_line) - strlen(data_line) - 1);
 
-        // Если строка заполнена или это последнее значение
-        if ((i+1) % VALUES_PER_LINE == 0 || i == DATA_SIZE-1) {
-            strncat(data_line, "\r\n", sizeof(data_line) - strlen(data_line) - 1);
-            CDC_Transmit_FS((uint8_t*)data_line, strlen(data_line));
-            HAL_Delay(10);
-            data_line[0] = '\0';
-        }
-    }
+       // Если строка заполнена или это последнее значение
+       if ((i+1) % VALUES_PER_LINE == 0 || i == DATA_SIZE-1) {
+           strncat(data_line, "\r\n", sizeof(data_line) - strlen(data_line) - 1);
+           CDC_Transmit_FS((uint8_t*)data_line, strlen(data_line));
+           HAL_Delay(10);
+           data_line[0] = '\0';
+       }
+   }
 }
 
 /**
@@ -941,92 +1021,36 @@ void FPGA_LoadConfig(void) {
     HAL_Delay(5);
 }
 
-/**
-  * @brief Многократное чтение и усреднение данных из ПЛИС с проверкой порога для конкретного набора параметров
-  */
-void ReadFPGAData(int param_index) {
-    // Инициализация итогового массива нулями
-    memset(averaged_fpga_data, 0, sizeof(averaged_fpga_data));
-    averaging_complete = false;
 
-    // Получаем количество циклов из параметров текущего набора
-    uint32_t cycles = params[param_index].cycle_number;
-    float threshold = params[param_index].threshold;
+//void Set_DAC_Voltage(float voltage)
+//{
+//    uint16_t dac_value = (uint16_t)voltage;
+//    HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
+//}
+//
+//void Set_DAC_Voltage(uint32_t gain) {
+//    if (gain > 182) gain = 182;
+//
+//    uint32_t dac_value = (gain * 4095) / 182;
+//
+//    HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
+//    // HAL_DAC_Start(&hdac, DAC_CHANNEL_1); // УБЕРИТЕ ЭТУ СТРОКУ
+//    dac_voltage = (gain / 182.0f) * 3.3f;
+//}
+//void Set_DAC_Voltage(float voltage) {
+//    if (voltage < 0) voltage = 0;
+//    if (voltage > 1) voltage = 1;
+//
+//    uint32_t dac_value = (voltage / 3.3f) * 4095;
+//    HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
+//    HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
+//    dac_voltage = voltage;
+//}
 
-    if (cycles == 0) {
-        cycles = 1;
-    }
+void Set_DAC_Voltage(uint32_t gain) {
 
-    uint32_t valid_cycles = 0;
-
-    for (uint32_t cycle = 0; cycle < cycles; cycle++) {
-        // Генерируем START импульс для нового измерения
-        GenerateStartPulse();
-
-        // Ждем некоторое время для стабилизации ПЛИС
-        HAL_Delay(1);
-
-        bool threshold_exceeded = false;
-
-        // Читаем данные во временный буфер с проверкой порога
-        __disable_irq();
-
-        for (int i = 0; i < DATA_SIZE; i++) {
-            uint16_t value = fpga_reg[0];
-            uint16_t raw_value = value & 0x0FFF - 2048;
-
-            if (abs((int16_t)raw_value) > threshold) {
-                threshold_exceeded = true;
-                __enable_irq();
-                break;
-            }
-
-            temp_fpga_buffer[i] = raw_value;
-            for(volatile int j = 0; j < 10; j++);
-        }
-
-        __enable_irq();
-
-        // Если порог превышен, пропускаем этот цикл
-        if (threshold_exceeded) {
-            continue;
-        }
-
-        // Усредняем данные только если цикл валидный
-        valid_cycles++;
-        for (int i = 0; i < DATA_SIZE; i++) {
-            if (valid_cycles == 1) {
-                averaged_fpga_data[i] = (float)temp_fpga_buffer[i];
-            } else {
-                averaged_fpga_data[i] = (averaged_fpga_data[i] * (valid_cycles - 1) + (float)temp_fpga_buffer[i]) / valid_cycles;
-            }
-        }
-
-        HAL_Delay(10);
-    }
-
-    // Копируем усредненные данные в основную структуру только если есть валидные циклы
-    if (valid_cycles > 0) {
-        for (int i = 0; i < DATA_SIZE; i++) {
-            fpga_data.data[i] = (uint16_t)averaged_fpga_data[i];
-        }
-        fpga_data.data_count = DATA_SIZE;
-        fpga_data.data_ready = true;
-        averaging_complete = true;
-    } else {
-        fpga_data.data_ready = false;
-        averaging_complete = false;
-    }
-}
-
-void Set_DAC_Voltage(float voltage) {
-    if (voltage < 0) voltage = 0;
-    if (voltage > 1) voltage = 1;
-
-    uint32_t dac_value = (voltage / 3.3f) * 4095;
-    HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
+    HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, 4095-gain);
     HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
-    dac_voltage = voltage;
 }
 /* USER CODE END 0 */
 
@@ -1066,6 +1090,7 @@ int main(void)
     MX_FSMC_Init();
     MX_SPI2_Init();
     /* USER CODE BEGIN 2 */
+    //Set_DAC_Voltage(1212);
 
     HAL_Delay(150);
     FPGA_LoadConfig();
@@ -1087,12 +1112,21 @@ int main(void)
     LoadParametersFromFlash();
     HAL_Delay(1000);
     InitializeLoRa();
+ HAL_DAC_Start(&hdac, DAC_CHANNEL_1);  // ← ДОБАВЬТЕ ЭТУ СТРОКУ
+
+//
+//
+//        HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET);
+//                HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_SET);
+//                 HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
+//                 HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_SET);
 
     /* USER CODE END 2 */
 
     /* Infinite loop */
     /* USER CODE BEGIN WHILE */
     while (1) {
+
 
 
         if (new_data_received) {
@@ -1218,6 +1252,8 @@ static void MX_DAC_Init(void)
   /* USER CODE END DAC_Init 2 */
 
 }
+
+
 
 /**
   * @brief SPI2 Initialization Function
