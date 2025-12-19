@@ -7,9 +7,9 @@
 #include <string.h>
 
 // Определения размеров
-#define FINAL_DATA_SIZE 5000
-#define DATA_VALUES_COUNT 4600
-#define DATA_SIZE 7000
+#define FINAL_DATA_SIZE 1000
+#define DATA_VALUES_COUNT 1000
+#define DATA_SIZE 5000
 #define NUM_PARAM_SETS 4
 
 // Структура для хранения параметров (одного набора)

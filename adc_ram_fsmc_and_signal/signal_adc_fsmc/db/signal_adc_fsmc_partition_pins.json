@@ -64,7 +64,11 @@
 					"strict" : false
 				},
 				{
-					"name" : "FPGA_OE",
+					"name" : "FSMC_D[13]",
+					"strict" : false
+				},
+				{
+					"name" : "FSMC_D[15]",
 					"strict" : false
 				},
 				{
@@ -117,6 +121,10 @@
 				},
 				{
 					"name" : "START_FPGA",
+					"strict" : false
+				},
+				{
+					"name" : "FPGA_OE",
 					"strict" : false
 				}
 			]

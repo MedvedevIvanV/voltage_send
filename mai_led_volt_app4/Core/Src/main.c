@@ -19,7 +19,7 @@
 #include "thickness_calculator.h"
 #include "temperature_sensor.h"
 #include "stm32f4xx_hal.h"
-#include <not_adc_tact.h>  // Файл с конфигурацией ПЛИС (массив uint8_t fpga_config[])
+#include <pin_fsmc.h>  // Файл с конфигурацией ПЛИС (массив uint8_t fpga_config[])
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -30,7 +30,7 @@
 /* USER CODE BEGIN PD */
 #define START_PULSE_DURATION_NS 200   // Длительность стартового импульса в наносекундах
 #define USB_RX_BUFFER_SIZE 1100
-#define FINAL_DATA_SIZE 5000
+#define FINAL_DATA_SIZE 1000
 #define UART_RX_TIMEOUT_MS 100
 
 // LoRa module pins
@@ -53,7 +53,7 @@
 #define ACK_STRING           "ACK\r\n"
 #define COMPLETE_STRING      "COMPLETE\r\n"
 
-#define DATA_SIZE 7000       // Количество значений в ПЛИС
+#define DATA_SIZE 5000       // Количество значений в ПЛИС
 #define VALUES_PER_LINE 10            // Количество значений в строке вывода
 /* USER CODE END PD */
 
@@ -69,8 +69,6 @@ SPI_HandleTypeDef hspi2;
 TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart1;
-
-SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
 char usb_msg[1024];                   // Буфер для USB сообщений
@@ -121,8 +119,6 @@ typedef struct {
 } FPGA_Data;
 
 FPGA_Data fpga_data;                 // Структура для хранения данных ПЛИС
-volatile uint16_t *fpga_reg;         // Указатель на регистр ПЛИС
-#define FPGA_BASE_ADDRESS 0x60000000  // Базовый адрес Bank1 (NE1)
 
 
 uint16_t temp_fpga_buffer[DATA_SIZE];     // Временный буфер для чтения
@@ -142,7 +138,6 @@ static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_DAC_Init(void);
 static void MX_TIM3_Init(void);
-static void MX_FSMC_Init(void);
 static void MX_SPI2_Init(void);
 /* USER CODE BEGIN PFP */
 void SendUSBDebugMessage(const char *message);
@@ -459,13 +454,13 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
                 continue;
             }
 
-            // Остальной код обработки для активного канала остается без изменений
-            switch(i) {
-                case 0: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET); break;
-                case 1: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_SET); break;
-                case 2: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET); break;
-                case 3: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_SET); break;
-            }
+//            // Остальной код обработки для активного канала остается без изменений
+//            switch(i) {
+//                case 0: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET); break;
+//                case 1: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_SET); break;
+//                case 2: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET); break;
+//                case 3: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_SET); break;
+//            }
 
         // Устанавливаем DAC напряжение для текущего набора параметров
            Set_DAC_Voltage((uint32_t)params[i].gain);
@@ -833,70 +828,119 @@ void SendUARTResponse(const char* response)
  * @brief Многократное чтение и усреднение данных из ПЛИС с проверкой порога для конкретного набора параметров
  */
 void ReadFPGAData(int param_index) {
-   // Инициализация итогового массива нулями
-   memset(averaged_fpga_data, 0, sizeof(averaged_fpga_data));
-   averaging_complete = false;
+    // Инициализация итогового массива нулями
+    memset(averaged_fpga_data, 0, sizeof(averaged_fpga_data));
+    averaging_complete = false;
 
-   // Получаем количество циклов из параметров текущего набора
-   uint32_t cycles = params[param_index].cycle_number;
-   float threshold = params[param_index].threshold;
+    // Получаем количество циклов из параметров текущего набора
+    uint32_t cycles = params[param_index].cycle_number;
+    float threshold = params[param_index].threshold;
 
-   if (cycles == 0) {
-       cycles = 1;
-   }
+    if (cycles == 0) {
+        cycles = 1;
+    }
 
-   uint32_t valid_cycles = 0;
+    uint32_t valid_cycles = 0;
+    bool fl = false;
+    uint16_t n_date = 0;
+    bool threshold_exceeded = false;
 
-   for (uint32_t cycle = 0; cycle < cycles; cycle++) {
-       // Генерируем START импульс для нового измерения
-       GenerateStartPulse();
+    for (uint32_t cycle = 0; cycle < cycles; cycle++) {
 
-       // Ждем некоторое время для стабилизации ПЛИС
-       HAL_Delay(1);
-       bool threshold_exceeded = false;
+    	HAL_Delay(50);
+        // Генерируем START импульс для нового измерения
+        GenerateStartPulse();
+        threshold_exceeded = false;
 
-       // Читаем данные во временный буфер с проверкой порога
-       __disable_irq();
+        // Ждем, когда ПЛИС выставит бит 15 в 1 (данные готовы)
+        fl = false;
+        while(!fl) {
+            if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_10)) {  // PD10 = бит 15
+                fl = true;
+            }
+        }
 
-       for (int i = 0; i < DATA_SIZE; i++) {
+        __disable_irq();
 
-           uint16_t value = fpga_reg[0];
-           uint16_t raw_value = value & 0x0FFF; // & 0x0FFF + 2048;
+        // Считываем DATA_SIZE точек и проверяем порог
+        for (int i = 0; i < DATA_SIZE; i++) {
+            HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, RESET);  // OE = 0
 
+            // ЕСЛИ РАССКОМЕНТИРОВАТЬ ТО ПОПАДЕМ В БЕСКОНЕЧНЫЙ ЦИКЛ
+            // while(!fl) {
+            //     if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_9)) {  // PD9 = бит 14
+            //         fl = true;
+            //     }
+            // }
 
-           if ((abs((int16_t)raw_value)-2047) > threshold) {
-               threshold_exceeded = true;
-               __enable_irq();
-               break;
-           }
+            // Считываем данные (12 бит)
+            n_date = 0;
+            if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_14)) n_date |= 0x0001;
+            if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_15)) n_date |= 0x0002;
+            if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_0))  n_date |= 0x0004;
+            if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_1))  n_date |= 0x0008;
+            if(HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_7))  n_date |= 0x0010;
+            if(HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_8))  n_date |= 0x0020;
+            if(HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_9))  n_date |= 0x0040;
+            if(HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_10)) n_date |= 0x0080;
+            if(HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_11)) n_date |= 0x0100;
+            if(HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_12)) n_date |= 0x0200;
+            if(HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_13)) n_date |= 0x0400;
+            if(HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_14)) n_date |= 0x0800;
 
-           temp_fpga_buffer[i] = raw_value;
-           for(volatile int j = 0; j < 10; j++);
-       }
+            // Сохраняем сырые данные во временный буфер
+            temp_fpga_buffer[i] = n_date & 0x0FFF;
 
-       __enable_irq();
+            // Проверяем порог ТОЛЬКО для точек после индекса 400
+            if (i > 600) {
+                // Вычисляем абсолютное значение (с вычитанием 2047)
+                float value = temp_fpga_buffer[i] - 2047.0;
+                if (fabsf(value) > threshold) {
+                    threshold_exceeded = true;
+//                    // Завершаем чтение текущего слова
+//                    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, SET);  // OE = 1
+//                    // НЕМЕДЛЕННО прерываем чтение этого цикла!
+////                    for (int i = 0; i < DATA_SIZE; i++) { temp_fpga_buffer[i] = 0.0; }
+//                    __enable_irq();
+//                    break;
+                }
+            }
 
-       // Если порог превышен, пропускаем этот цикл
-       if (threshold_exceeded) {
-           continue;
-       }
+            // Завершаем чтение текущего слова
+            HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, SET);  // OE = 1
 
-       // Усредняем данные только если цикл валидный
-       valid_cycles++;
-       for (int i = 0; i < DATA_SIZE; i++) {
-           if (valid_cycles == 1) {
-               averaged_fpga_data[i] = (float)temp_fpga_buffer[i] - 2047.0; //- 2089.0;
-           } else {
-              // averaged_fpga_data[i] = (averaged_fpga_data[i] * (valid_cycles - 1) + ((float)temp_fpga_buffer[i]- 2047.0)) / valid_cycles;
-        	   averaged_fpga_data[i] = (averaged_fpga_data[i] + ((float)temp_fpga_buffer[i]- 2047.0)) / 2;
-           }
-       }
+            // Короткая задержка между словами
+            for(volatile int d = 0; d < 10; d++);
+        }
 
-       HAL_Delay(10);
-   }
+        __enable_irq();
 
-   // Копируем усредненные данные в основную структуру только если есть валидные циклы
-   if (valid_cycles > 0) {
+        // ЕСЛИ порог превышен - НЕМЕДЛЕННО переходим к следующему cycle
+        // БЕЗ сохранения и усреднения!
+        if (threshold_exceeded) {
+        	if (cycles == 1) {
+        		break;
+        	}
+        	else {
+            continue;}  // Пропускаем весь остальной код цикла
+        }
+
+        // Только если порог НЕ превышен - усредняем данные
+        valid_cycles++;
+        for (int i = 0; i < DATA_SIZE; i++) {
+            if (valid_cycles == 1) {
+                // Для первого валидного цикла
+                averaged_fpga_data[i] = (float)temp_fpga_buffer[i] - 2047.0;
+            } else {
+                // Для последующих валидных циклов
+                averaged_fpga_data[i] = (averaged_fpga_data[i] + ((float)temp_fpga_buffer[i] - 2047.0)) / 2;
+            }
+        }
+
+    }
+
+    // Копируем усредненные данные в основную структуру только если есть валидные циклы
+    if (valid_cycles > 0) {
        for (int i = 0; i < DATA_SIZE; i++) {
            fpga_data.data[i] = (uint16_t)averaged_fpga_data[i];
        }
@@ -909,6 +953,9 @@ void ReadFPGAData(int param_index) {
    }
 }
 
+/**
+ * @brief Вывод усредненных данных через USB CDC для конкретного набора параметров
+ */
 /**
  * @brief Вывод усредненных данных через USB CDC для конкретного набора параметров
  */
@@ -936,6 +983,15 @@ void PrintDataToUSB(int param_index) {
            data_line[0] = '\0';
        }
    }
+
+   // ОБНУЛЕНИЕ БУФЕРОВ ПОСЛЕ ПЕРЕДАЧИ
+   memset(averaged_fpga_data, 0, sizeof(averaged_fpga_data));
+   memset(temp_fpga_buffer, 0, sizeof(temp_fpga_buffer));
+   memset(&fpga_data, 0, sizeof(fpga_data));
+
+   // Сброс флагов
+   fpga_data.data_ready = false;
+   averaging_complete = false;
 }
 
 /**
@@ -1060,36 +1116,40 @@ void Set_DAC_Voltage(uint32_t gain) {
   */
 int main(void)
 {
-    /* USER CODE BEGIN 1 */
-    /* USER CODE END 1 */
 
-    /* MCU Configuration--------------------------------------------------------*/
+  /* USER CODE BEGIN 1 */
+  /* USER CODE END 1 */
 
-    /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-    HAL_Init();
+  /* MCU Configuration--------------------------------------------------------*/
 
-    /* USER CODE BEGIN Init */
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
 
-    /* USER CODE END Init */
+  /* USER CODE BEGIN Init */
 
-    /* Configure the system clock */
-    SystemClock_Config();
+  /* USER CODE END Init */
 
-    /* USER CODE BEGIN SysInit */
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
     __HAL_RCC_GPIOC_CLK_ENABLE();
-    /* USER CODE END SysInit */
+  /* USER CODE END SysInit */
 
-    /* Initialize all configured peripherals */
-    MX_GPIO_Init();
-    MX_USART1_UART_Init();
-    MX_USB_DEVICE_Init();
-    MX_DAC_Init();
-    MX_TIM3_Init();
-    MX_FSMC_Init();
-    MX_SPI2_Init();
-    /* USER CODE BEGIN 2 */
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_USART1_UART_Init();
+  MX_USB_DEVICE_Init();
+  MX_DAC_Init();
+  MX_TIM3_Init();
+  MX_SPI2_Init();
+  /* USER CODE BEGIN 2 */
+
+ 	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, SET);
+
+
     //Set_DAC_Voltage(1212);
 
     HAL_Delay(150);
@@ -1100,7 +1160,6 @@ int main(void)
 
     HAL_UART_Receive_IT(&huart1, (uint8_t*)uart_rx_buf, 1);
 
-    fpga_reg = (volatile uint16_t *)FPGA_BASE_ADDRESS;
     memset(&fpga_data, 0, sizeof(fpga_data));
 
     // Инициализация флагов активных каналов
@@ -1121,13 +1180,16 @@ int main(void)
 //                 HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);
 //                 HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_SET);
 
-    /* USER CODE END 2 */
+  /* USER CODE END 2 */
 
-    /* Infinite loop */
-    /* USER CODE BEGIN WHILE */
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
     while (1) {
 
-
+//    	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, RESET);
+//    	HAL_Delay(5000);
+//    		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, SET);
+//    	HAL_Delay(5000);
 
         if (new_data_received) {
             uart_message_received = 0;
@@ -1166,8 +1228,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    /* USER CODE END 3 */
+  /* USER CODE END 3 */
 }
+
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -1189,10 +1252,10 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 8;
-  RCC_OscInitStruct.PLL.PLLN = 336;
+  RCC_OscInitStruct.PLL.PLLM = 4;
+  RCC_OscInitStruct.PLL.PLLN = 72;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 7;
+  RCC_OscInitStruct.PLL.PLLQ = 3;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -1204,10 +1267,10 @@ void SystemClock_Config(void)
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -1252,8 +1315,6 @@ static void MX_DAC_Init(void)
   /* USER CODE END DAC_Init 2 */
 
 }
-
-
 
 /**
   * @brief SPI2 Initialization Function
@@ -1405,10 +1466,14 @@ static void MX_GPIO_Init(void)
                           |GPIO_PIN_10|GPIO_PIN_11, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4|GPIO_PIN_6, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : PE2 PE1 */
-  GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_1;
+  /*Configure GPIO pins : PE2 PE7 PE8 PE9
+                           PE10 PE11 PE12 PE13
+                           PE14 PE15 PE1 */
+  GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9
+                          |GPIO_PIN_10|GPIO_PIN_11|GPIO_PIN_12|GPIO_PIN_13
+                          |GPIO_PIN_14|GPIO_PIN_15|GPIO_PIN_1;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
@@ -1440,6 +1505,22 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : PD8 PD9 PD10 PD13
+                           PD14 PD15 PD0 PD1 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10|GPIO_PIN_13
+                          |GPIO_PIN_14|GPIO_PIN_15|GPIO_PIN_0|GPIO_PIN_1;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PD11 PD12 */
+  GPIO_InitStruct.Pin = GPIO_PIN_11|GPIO_PIN_12;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF12_FSMC;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
   /*Configure GPIO pins : PC6 PC7 PC8 PC9
                            PC10 PC11 */
   GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9
@@ -1455,8 +1536,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PD6 */
-  GPIO_InitStruct.Pin = GPIO_PIN_6;
+  /*Configure GPIO pins : PD4 PD6 */
+  GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_6;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -1465,58 +1546,6 @@ static void MX_GPIO_Init(void)
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
-}
-
-/* FSMC initialization function */
-static void MX_FSMC_Init(void)
-{
-  /* USER CODE BEGIN FSMC_Init 0 */
-
-  /* USER CODE END FSMC_Init 0 */
-
-  FSMC_NORSRAM_TimingTypeDef Timing = {0};
-
-  /* USER CODE BEGIN FSMC_Init 1 */
-
-  /* USER CODE END FSMC_Init 1 */
-
-  /** Perform the SRAM1 memory initialization sequence
-  */
-  hsram1.Instance = FSMC_NORSRAM_DEVICE;
-  hsram1.Extended = FSMC_NORSRAM_EXTENDED_DEVICE;
-  /* hsram1.Init */
-  hsram1.Init.NSBank = FSMC_NORSRAM_BANK1;
-  hsram1.Init.DataAddressMux = FSMC_DATA_ADDRESS_MUX_DISABLE;
-  hsram1.Init.MemoryType = FSMC_MEMORY_TYPE_PSRAM;
-  hsram1.Init.MemoryDataWidth = FSMC_NORSRAM_MEM_BUS_WIDTH_16;
-  hsram1.Init.BurstAccessMode = FSMC_BURST_ACCESS_MODE_DISABLE;
-  hsram1.Init.WaitSignalPolarity = FSMC_WAIT_SIGNAL_POLARITY_LOW;
-  hsram1.Init.WrapMode = FSMC_WRAP_MODE_DISABLE;
-  hsram1.Init.WaitSignalActive = FSMC_WAIT_TIMING_BEFORE_WS;
-  hsram1.Init.WriteOperation = FSMC_WRITE_OPERATION_DISABLE;
-  hsram1.Init.WaitSignal = FSMC_WAIT_SIGNAL_DISABLE;
-  hsram1.Init.ExtendedMode = FSMC_EXTENDED_MODE_DISABLE;
-  hsram1.Init.AsynchronousWait = FSMC_ASYNCHRONOUS_WAIT_DISABLE;
-  hsram1.Init.WriteBurst = FSMC_WRITE_BURST_DISABLE;
-  hsram1.Init.PageSize = FSMC_PAGE_SIZE_NONE;
-  /* Timing */
-  Timing.AddressSetupTime = 2;
-  Timing.AddressHoldTime = 1;
-  Timing.DataSetupTime =  5;
-  Timing.BusTurnAroundDuration = 1;
-  Timing.CLKDivision = 2;
-  Timing.DataLatency = 2;
-  Timing.AccessMode = FSMC_ACCESS_MODE_A;
-  /* ExtTiming */
-
-  if (HAL_SRAM_Init(&hsram1, &Timing, NULL) != HAL_OK)
-  {
-    Error_Handler( );
-  }
-
-  /* USER CODE BEGIN FSMC_Init 2 */
-
-  /* USER CODE END FSMC_Init 2 */
 }
 
 /* USER CODE BEGIN 4 */

@@ -1,16 +1,16 @@
-Fitter Status : Successful - Wed Dec 10 14:58:54 2025
+Fitter Status : Successful - Fri Dec 19 11:52:34 2025
 Quartus Prime Version : 17.1.0 Build 590 10/25/2017 SJ Lite Edition
 Revision Name : signal_adc_fsmc
 Top-level Entity Name : signal_adc_fsmc
 Family : Cyclone 10 LP
 Device : 10CL006YE144A7G
 Timing Models : Final
-Total logic elements : 190 / 6,272 ( 3 % )
-    Total combinational functions : 166 / 6,272 ( 3 % )
-    Dedicated logic registers : 115 / 6,272 ( 2 % )
-Total registers : 115
+Total logic elements : 194 / 6,272 ( 3 % )
+    Total combinational functions : 165 / 6,272 ( 3 % )
+    Dedicated logic registers : 119 / 6,272 ( 2 % )
+Total registers : 119
 Total pins : 37 / 89 ( 42 % )
 Total virtual pins : 0
-Total memory bits : 180,000 / 276,480 ( 65 % )
+Total memory bits : 60,000 / 276,480 ( 22 % )
 Embedded Multiplier 9-bit elements : 0 / 30 ( 0 % )
 Total PLLs : 1 / 2 ( 50 % )

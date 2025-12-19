@@ -1,1 +1,4 @@
-Info (10281): Verilog HDL Declaration information at signal_adc_fsmc.v(10): object "FPGA_WE" differs only in case from object "fpga_we" in the same scope File: C:/Proect FGPA/Verification/adc_ram_fsmc/signal_adc_fsmc/signal_adc_fsmc.v Line: 10
+Warning (10268): Verilog HDL information at signal_adc_fsmc.v(75): always construct contains both blocking and non-blocking assignments File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 75
+Warning (10268): Verilog HDL information at signal_adc_fsmc.v(97): always construct contains both blocking and non-blocking assignments File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 97
+Warning (10268): Verilog HDL information at signal_adc_fsmc.v(119): always construct contains both blocking and non-blocking assignments File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 119
+Warning (10268): Verilog HDL information at signal_adc_fsmc.v(140): always construct contains both blocking and non-blocking assignments File: C:/FGPA/adc_ram_fsmc_and_signal/signal_adc_fsmc/signal_adc_fsmc.v Line: 140

@@ -6,7 +6,7 @@ module signal_adc_fsmc (
     output ON_32,
     output CTRL_SW,
     output CLK_P,               // Тактовый сигнал 80 МГц для АЦП
-    input [11:0] adc_data,
+    input [11:0] adc_data,      // Оставляем вход, но не используем
     
     // === FSMC Interface ===
     input FPGA_OE,             // Сигнал чтения (активный 0)
@@ -115,6 +115,23 @@ always @(posedge clk_80mhz) begin
 end
 assign ON_32 = on_32_reg;
 
+// Генерация сигнала CTRL_SW
+//reg ctrl_sw_reg = 0;
+//always @(posedge clk_80mhz) begin
+//    if (!pll_locked) begin
+//        ctrl_sw_reg <= 0;
+//    end else begin
+//        if (counter < 24'd6399999) begin
+//            ctrl_sw_reg <= 0;
+//        end else if (counter < 24'd6400203) begin
+//            ctrl_sw_reg <= 1;
+//        end else begin
+//            ctrl_sw_reg <= 0;
+//        end
+//    end
+//end
+//assign CTRL_SW = ctrl_sw_reg;
+
 // Генерация сигнала CTRL_SW - постоянно 0
 reg ctrl_sw_reg = 0;
 always @(posedge clk_80mhz) begin
@@ -126,10 +143,9 @@ always @(posedge clk_80mhz) begin
 end
 assign CTRL_SW = ctrl_sw_reg;
 
-
 // ================== Захват данных с АЦП ==================
 // Буфер на 15,000 значений (исправлено с 10,000 на 15,000 согласно коду)
-reg [11:0] adc_buffer [0:14999];
+reg [11:0] adc_buffer [0:4999];
 reg [13:0] sample_counter = 0; // 14 бит достаточно для 15000
 reg capture_active = 0;
 reg capture_done = 0;
@@ -159,7 +175,7 @@ always @(posedge clk_80mhz) begin
         capture_active <= 1; // Начинаем захват при counter = 6,400,000
         capture_done <= 0;
     end else if (capture_active) begin
-        if (sample_counter < 15000) begin
+        if (sample_counter < 5000) begin
             adc_buffer[sample_counter] <= adc_data;
             sample_counter <= sample_counter + 1;
         end else begin
@@ -169,41 +185,95 @@ always @(posedge clk_80mhz) begin
     end
 end
 
-// ================== FSMC Interface ==================
-reg [13:0] read_ptr = 0; // 14 бит для адресации 15000 значений
-reg [15:0] fsmc_data_out;
 
-// Управление указателем чтения
-always @(posedge clk_80mhz) begin
-    if (!pll_locked) begin
-        read_ptr <= 0;
-    end else if (start_pulse) begin
-        read_ptr <= 0;
-    end else if (!FPGA_OE && capture_done) begin
-        if (read_ptr < 14999) begin
-            read_ptr <= read_ptr + 1;
-        end
-        // Не сбрасываем read_ptr, чтобы можно было читать данные многократно
-    end
-end
+// Регистры для управления передачей данных в МК
+reg [15:0] fsmc_data_out = 16'h0000;      // Выходные данные на FSMC
+reg [12:0] read_index = 0;                // Индекс читаемого значения (0-4999)
+reg [2:0] oe_sync = 3'b111;               // Синхронизатор сигнала FPGA_OE
+reg prev_oe = 1'b1;                       // Предыдущее значение OE
+reg read_active = 1'b0;                   // Флаг активного чтения
+reg [1:0] ack_delay = 2'b00;              // Задержка для подтверждения
+reg [12:0] transfer_counter = 0;          // Счетчик переданных значений
 
-// Чтение из буфера
-always @(posedge clk_80mhz) begin
-    if (!pll_locked) begin
-        fsmc_data_out <= 16'h0000;
-    end else if (!FPGA_OE && capture_done && read_ptr < 15000) begin
-        fsmc_data_out <= {4'b0000, adc_buffer[read_ptr]};
-    end else begin
-        fsmc_data_out <= 16'h0000;
-    end
-end
-
+// Присваивание выходных данных
 assign FSMC_D = fsmc_data_out;
 
-// ================== Debug Signals ==================
-// Можно добавить для отладки
-wire [13:0] debug_sample_count = sample_counter;
-wire debug_capture_active = capture_active;
-wire debug_capture_done = capture_done;
+// Синхронизация сигнала OE (активный 0)
+always @(posedge clk_80mhz) begin
+    if (!pll_locked) begin
+        oe_sync <= 3'b111;
+        prev_oe <= 1'b1;
+    end else begin
+        oe_sync <= {oe_sync[1:0], FPGA_OE};  // Сдвиговый регистр для синхронизации
+        prev_oe <= oe_sync[1];               // Запоминаем предыдущее значение
+    end
+end
+
+// Определение фронтов сигнала OE
+wire oe_falling_edge = (prev_oe == 1'b1 && oe_sync[1] == 1'b0);  // Передний фронт (начало чтения)
+wire oe_rising_edge = (prev_oe == 1'b0 && oe_sync[1] == 1'b1);   // Задний фронт (конец чтения)
+
+// Управление процессом передачи данных
+always @(posedge clk_80mhz) begin
+    if (!pll_locked) begin
+        // Сброс всех регистров при отсутствии блокировки PLL
+        fsmc_data_out <= 16'h0000;
+        read_index <= 0;
+        read_active <= 1'b0;
+        ack_delay <= 2'b00;
+        transfer_counter <= 0;
+    end else begin
+        // Основная логика работы с МК
+        if (capture_done) begin
+            // Если захват данных завершен, выставляем бит 15 в 1
+            // Это сигнализирует МК, что данные готовы к чтению
+            fsmc_data_out[15] <= 1'b1;
+        end
+        
+        // Обработка начала чтения по переднему фронту OE
+        if (oe_falling_edge && capture_done) begin
+            // МК начал запрос на чтение - сбрасываем бит 15 в 0
+            fsmc_data_out[15] <= 1'b0;
+            read_active <= 1'b1;          // Активируем процесс чтения
+            ack_delay <= 2'b01;           // Устанавливаем задержку для подтверждения
+        end
+        
+        // Обработка активного процесса чтения
+        if (read_active) begin
+            // Задержка для стабилизации и обработки сигналов
+            if (ack_delay > 0) begin
+                ack_delay <= ack_delay - 1;
+            end else begin
+                // После задержки выставляем бит 14 в 1 и данные
+                // Это сигнализирует МК, что данные готовы
+                fsmc_data_out <= {1'b0, 1'b1, 1'b0, adc_buffer[read_index]};  // [15]=0, [14]=1, [13]=0, [11:0]=данные
+            end
+            
+            // Обработка завершения чтения (задний фронт OE)
+            if (oe_rising_edge) begin
+                // МК завершил чтение текущего значения
+                // Готовимся к следующему запросу
+                fsmc_data_out <= 16'h0000;    // Сбрасываем выходные данные
+                
+                if (read_index < 4999) begin
+                    // Если еще не все данные переданы
+                    read_index <= read_index + 1;  // Увеличиваем индекс
+                    ack_delay <= 2'b01;           // Сбрасываем задержку для следующего чтения
+                end else begin
+                    // Все 5000 значений переданы
+                    read_index <= 0;              // Сбрасываем индекс
+                    read_active <= 1'b0;          // Деактивируем чтение
+                    
+                    // После передачи всех данных можно сбросить capture_done
+                    // если нужно начать новый захват
+                    // capture_done <= 1'b0;
+                end
+            end
+        end else if (!capture_done) begin
+            // Если захват не завершен, держим все выходы в 0
+            fsmc_data_out <= 16'h0000;
+        end
+    end
+end
 
 endmodule

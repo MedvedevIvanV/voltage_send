@@ -4,7 +4,7 @@
 ../Core/Src/thickness_calculator.c:100:6:InitializeParamSet	16	static
 ../Core/Src/thickness_calculator.c:124:6:InitializeParameters	16	static
 ../Core/Src/thickness_calculator.c:134:6:CopyDataWithoutModification	32	static
-../Core/Src/thickness_calculator.c:146:6:NormalizeData	18424	static
+../Core/Src/thickness_calculator.c:146:6:NormalizeData	4024	static
 ../Core/Src/thickness_calculator.c:166:6:CalculateAutocorrelation	56	static
 ../Core/Src/thickness_calculator.c:184:10:FindMaxAutocorrelationIndex	32	static
 ../Core/Src/thickness_calculator.c:206:6:CalculateZeroCrossingThickness	48	static

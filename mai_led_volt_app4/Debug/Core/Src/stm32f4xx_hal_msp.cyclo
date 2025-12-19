@@ -7,7 +7,3 @@
 ../Core/Src/stm32f4xx_hal_msp.c:242:6:HAL_TIM_Base_MspDeInit	2
 ../Core/Src/stm32f4xx_hal_msp.c:267:6:HAL_UART_MspInit	2
 ../Core/Src/stm32f4xx_hal_msp.c:307:6:HAL_UART_MspDeInit	2
-../Core/Src/stm32f4xx_hal_msp.c:334:13:HAL_FSMC_MspInit	2
-../Core/Src/stm32f4xx_hal_msp.c:393:6:HAL_SRAM_MspInit	1
-../Core/Src/stm32f4xx_hal_msp.c:405:13:HAL_FSMC_MspDeInit	2
-../Core/Src/stm32f4xx_hal_msp.c:452:6:HAL_SRAM_MspDeInit	1
