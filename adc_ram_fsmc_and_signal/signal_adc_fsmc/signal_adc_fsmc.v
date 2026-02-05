@@ -144,9 +144,8 @@ end
 assign CTRL_SW = ctrl_sw_reg;
 
 // ================== Захват данных с АЦП ==================
-// Буфер на 15,000 значений (исправлено с 10,000 на 15,000 согласно коду)
-reg [11:0] adc_buffer [0:4999];
-reg [13:0] sample_counter = 0; // 14 бит достаточно для 15000
+reg [11:0] adc_buffer [0:9999];          // Увеличено до 10000 точек
+reg [13:0] sample_counter = 0;           // 14 бит достаточно для 15000
 reg capture_active = 0;
 reg capture_done = 0;
 
@@ -175,7 +174,7 @@ always @(posedge clk_80mhz) begin
         capture_active <= 1; // Начинаем захват при counter = 6,400,000
         capture_done <= 0;
     end else if (capture_active) begin
-        if (sample_counter < 5000) begin
+        if (sample_counter < 10000) begin  // Изменено на 10000
             adc_buffer[sample_counter] <= adc_data;
             sample_counter <= sample_counter + 1;
         end else begin
@@ -188,12 +187,12 @@ end
 
 // Регистры для управления передачей данных в МК
 reg [15:0] fsmc_data_out = 16'h0000;      // Выходные данные на FSMC
-reg [12:0] read_index = 0;                // Индекс читаемого значения (0-4999)
+reg [13:0] read_index = 0;                // Индекс читаемого значения (0-9999) - увеличен до 14 бит
 reg [2:0] oe_sync = 3'b111;               // Синхронизатор сигнала FPGA_OE
 reg prev_oe = 1'b1;                       // Предыдущее значение OE
 reg read_active = 1'b0;                   // Флаг активного чтения
 reg [1:0] ack_delay = 2'b00;              // Задержка для подтверждения
-reg [12:0] transfer_counter = 0;          // Счетчик переданных значений
+reg [13:0] transfer_counter = 0;          // Счетчик переданных значений - увеличен до 14 бит
 
 // Присваивание выходных данных
 assign FSMC_D = fsmc_data_out;
@@ -255,12 +254,12 @@ always @(posedge clk_80mhz) begin
                 // Готовимся к следующему запросу
                 fsmc_data_out <= 16'h0000;    // Сбрасываем выходные данные
                 
-                if (read_index < 4999) begin
+                if (read_index < 9999) begin  // Изменено на 9999
                     // Если еще не все данные переданы
                     read_index <= read_index + 1;  // Увеличиваем индекс
                     ack_delay <= 2'b01;           // Сбрасываем задержку для следующего чтения
                 end else begin
-                    // Все 5000 значений переданы
+                    // Все 10000 значений переданы
                     read_index <= 0;              // Сбрасываем индекс
                     read_active <= 1'b0;          // Деактивируем чтение
                     

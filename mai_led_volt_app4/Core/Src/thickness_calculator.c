@@ -3,7 +3,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-
+#include "arm_math.h"
+#include "kiss_fft.h"
+#include <math.h>
 // Определения
 #define PARAMS_FLASH_ADDRESS 0x08080000
 #define PARAMS_SET_SIZE (sizeof(Parameters_t))
@@ -18,9 +20,13 @@ float thickness_value = 0.0f;
 float frequency_ns = 12.5e-9f;
 
 // Буферы данных
-float32_t normalized_data[DATA_VALUES_COUNT] = {0};
-float32_t autocorrelation_result[DATA_VALUES_COUNT] = {0};
-float32_t final_data[FINAL_DATA_SIZE] = {0};
+// Новое объявление
+float32_t* normalized_data = NULL;
+float32_t* autocorrelation_result = NULL;
+uint32_t processed_data_size = 0;
+
+float32_t* new_final_data = NULL;
+// float32_t new_final_data[DATA_SIZE] = {0};
 
 // Внешние переменные
 extern float averaged_fpga_data[DATA_SIZE];
@@ -114,7 +120,7 @@ void InitializeParamSet(uint8_t set_number) {
     params[set_number].cycle_number = 10;
     strncpy(params[set_number].sensor_number, "0001", sizeof(params[set_number].sensor_number));
     params[set_number].gain = 1.0f;
-
+    params[set_number].points_count = 5000; // Значение по умолчанию для points_count
     parameters_initialized[set_number] = true;
 }
 
@@ -129,10 +135,10 @@ void InitializeParameters(void) {
 }
 
 /**
-  * @brief Копирование данных без добавления шума и расширения
+  * @brief Копирование данных
   */
 void CopyDataWithoutModification(const float32_t* src, float32_t* dest, uint32_t dest_size) {
-    uint32_t copy_size = (DATA_VALUES_COUNT < dest_size) ? DATA_VALUES_COUNT : dest_size;
+    uint32_t copy_size = (DATA_SIZE < dest_size) ? DATA_SIZE : dest_size;
     arm_copy_f32(src, dest, copy_size);
 
     for (uint32_t i = copy_size; i < dest_size; i++) {
@@ -144,31 +150,36 @@ void CopyDataWithoutModification(const float32_t* src, float32_t* dest, uint32_t
   * @brief Нормализация данных
   */
 void NormalizeData(uint8_t param_set) {
-    if (!parameters_initialized[param_set]) return;
+    if (!parameters_initialized[param_set] || normalized_data == NULL || processed_data_size == 0) return;
 
     float32_t mean, std_dev;
-    float32_t subtracted_mean[DATA_VALUES_COUNT];
+    float32_t* subtracted_mean = (float32_t*)malloc(processed_data_size * sizeof(float32_t));
 
-    arm_mean_f32(normalized_data, DATA_VALUES_COUNT, &mean);
-    arm_offset_f32(normalized_data, -mean, subtracted_mean, DATA_VALUES_COUNT);
-    arm_std_f32(subtracted_mean, DATA_VALUES_COUNT, &std_dev);
+    if (subtracted_mean == NULL) return;
+
+    arm_mean_f32(normalized_data, processed_data_size, &mean);
+    arm_offset_f32(normalized_data, -mean, subtracted_mean, processed_data_size);
+    arm_std_f32(subtracted_mean, processed_data_size, &std_dev);
 
     if (std_dev != 0.0f) {
-        arm_scale_f32(subtracted_mean, 1.0f/std_dev, normalized_data, DATA_VALUES_COUNT);
+        arm_scale_f32(subtracted_mean, 1.0f/std_dev, normalized_data, processed_data_size);
     } else {
-        arm_copy_f32(subtracted_mean, normalized_data, DATA_VALUES_COUNT);
+        arm_copy_f32(subtracted_mean, normalized_data, processed_data_size);
     }
+
+    free(subtracted_mean);
 }
 
 /**
   * @brief Расчет автокорреляционной функции
   */
 void CalculateAutocorrelation(uint8_t param_set) {
-    if (!parameters_initialized[param_set]) return;
+    if (!parameters_initialized[param_set] || normalized_data == NULL ||
+        autocorrelation_result == NULL || processed_data_size == 0) return;
 
-    for (uint32_t lag = 0; lag < DATA_VALUES_COUNT; lag++) {
+    for (uint32_t lag = 0; lag < processed_data_size; lag++) {
         double sum = 0.0;
-        uint32_t count = DATA_VALUES_COUNT - lag;
+        uint32_t count = processed_data_size - lag;
 
         for (uint32_t i = 0; i < count; i++) {
             sum += (double)normalized_data[i] * (double)normalized_data[i + lag];
@@ -182,15 +193,26 @@ void CalculateAutocorrelation(uint8_t param_set) {
   * @brief Поиск индекса максимальной автокорреляции
   */
 uint32_t FindMaxAutocorrelationIndex(uint8_t param_set) {
-    if (!parameters_initialized[param_set]) {
+    if (!parameters_initialized[param_set] || autocorrelation_result == NULL) {
         return 0;
     }
 
     float32_t max_value = 0.0f;
     uint32_t max_idx = params[param_set].start_index;
-    uint32_t search_end = (params[param_set].end_index < DATA_VALUES_COUNT) ? params[param_set].end_index : DATA_VALUES_COUNT - 1;
 
-    for (uint32_t i = params[param_set].start_index; i < search_end; i++) {
+    // Проверяем границы
+    uint32_t search_start = params[param_set].start_index;
+    uint32_t search_end = DATA_SIZE - params[param_set].end_index - params[param_set].probe_length;
+
+    if (search_end > processed_data_size) {
+        search_end = processed_data_size;
+    }
+
+    if (search_start >= search_end) {
+        return search_start;
+    }
+
+    for (uint32_t i = search_start; i < search_end; i++) {
         if (autocorrelation_result[i] > max_value) {
             max_value = autocorrelation_result[i];
             max_idx = i;
@@ -198,6 +220,21 @@ uint32_t FindMaxAutocorrelationIndex(uint8_t param_set) {
     }
 
     return max_idx;
+}
+
+/**
+  * @brief Очистка динамически выделенной памяти
+  */
+void CleanupDynamicBuffers(void) {
+    if (normalized_data != NULL) {
+        free(normalized_data);
+        normalized_data = NULL;
+    }
+    if (autocorrelation_result != NULL) {
+        free(autocorrelation_result);
+        autocorrelation_result = NULL;
+    }
+    processed_data_size = 0;
 }
 
 /**
@@ -213,7 +250,7 @@ void CalculateZeroCrossingThickness(const float32_t* data, uint8_t param_set) {
     uint32_t zero_crossing_index = 0;
     bool found_threshold = false;
 
-    for (uint32_t i = 0; i < FINAL_DATA_SIZE; i++) {
+    for (uint32_t i = params[param_set].probe_length; i < DATA_SIZE; i++) {
         if (data[i] >= params[param_set].threshold_zero_crossing) {
             first_above_threshold_index = i;
             found_threshold = true;
@@ -227,7 +264,7 @@ void CalculateZeroCrossingThickness(const float32_t* data, uint8_t param_set) {
     }
 
     bool sign_positive = (data[first_above_threshold_index] >= 0);
-    for (uint32_t i = first_above_threshold_index + 1; i < FINAL_DATA_SIZE; i++) {
+    for (uint32_t i = first_above_threshold_index + 1; i < DATA_SIZE; i++) {
         bool current_sign_positive = (data[i] >= 0);
         if (current_sign_positive != sign_positive) {
             zero_crossing_index = i;
@@ -240,7 +277,7 @@ void CalculateZeroCrossingThickness(const float32_t* data, uint8_t param_set) {
         return;
     }
 
-    uint32_t final_index = zero_crossing_index + params[param_set].probe_length;
+    uint32_t final_index = zero_crossing_index;
     thickness_value = final_index / (2.0f * one_point_mm);
 }
 
@@ -248,39 +285,91 @@ void CalculateZeroCrossingThickness(const float32_t* data, uint8_t param_set) {
   * @brief Расчет толщины методом по стробам
   */
 void CalculateStrobeThickness(const float32_t* data, uint8_t param_set) {
-    if (!parameters_initialized[param_set]) {
-        return;
-    }
+    if (!parameters_initialized[param_set]) return;
 
-    float one_point_mm = 1.0f / (params[param_set].wave_speed * 1000.0f * frequency_ns);
-    float32_t max_value_first = -FLT_MAX;
-    uint32_t max_index_first = params[param_set].first_left_strobe;
-    float32_t max_value_second = -FLT_MAX;
-    uint32_t max_index_second = params[param_set].second_left_strobe;
-
-    for (uint32_t i = params[param_set].first_left_strobe; i <= params[param_set].first_right_strobe; i++) {
-        if (i < FINAL_DATA_SIZE && data[i] > max_value_first) {
-            max_value_first = data[i];
-            max_index_first = i;
-        }
-    }
-
-    for (uint32_t i = params[param_set].second_left_strobe; i <= params[param_set].second_right_strobe; i++) {
-        if (i < FINAL_DATA_SIZE && data[i] > max_value_second) {
-            max_value_second = data[i];
-            max_index_second = i;
-        }
-    }
-
-    if (max_value_first == -FLT_MAX || max_value_second == -FLT_MAX) {
+    // Проверка параметров
+    if (params[param_set].wave_speed <= 0 || frequency_ns <= 0) {
         thickness_value = 0.0f;
         return;
     }
 
-    uint32_t index_difference = max_index_second - max_index_first;
-    thickness_value = index_difference / (2.0f * one_point_mm);
-}
+    float one_point_mm = 1.0f / (params[param_set].wave_speed * 1000.0f * frequency_ns);
+    if (one_point_mm <= 0) {
+        thickness_value = 0.0f;
+        return;
+    }
 
+    // Проверка границ стробов
+    uint32_t left1 = params[param_set].first_left_strobe;
+    uint32_t right1 = params[param_set].first_right_strobe;
+    uint32_t left2 = params[param_set].second_left_strobe;
+    uint32_t right2 = params[param_set].second_right_strobe;
+
+    if (left1 > right1 || left2 > right2 ||
+        right1 >= DATA_SIZE || right2 >= DATA_SIZE) {
+        thickness_value = 0.0f;
+        return;
+    }
+
+    // Поиск максимумов с защитой от пустых данных
+    float32_t max1 = data[left1];
+    uint32_t idx1 = left1;
+    for (uint32_t i = left1 + 1; i <= right1; i++) {
+        if (data[i] > max1) {
+            max1 = data[i];
+            idx1 = i;
+        }
+    }
+
+    float32_t max2 = data[left2];
+    uint32_t idx2 = left2;
+    for (uint32_t i = left2 + 1; i <= right2; i++) {
+        if (data[i] > max2) {
+            max2 = data[i];
+            idx2 = i;
+        }
+    }
+
+    // Проверка разницы индексов
+    if (idx2 <= idx1) {
+        thickness_value = 0.0f;
+        return;
+    }
+
+    uint32_t diff = idx2 - idx1;
+    thickness_value = diff / (2.0f * one_point_mm);
+}
+void PrintAutocorrelationToUSB(int param_index) {
+    if (autocorrelation_result == NULL || processed_data_size == 0) return;
+
+    char usb_msg[128];
+
+    // Заголовок с информацией о корреляции
+    snprintf(usb_msg, sizeof(usb_msg), "Averaged ACF Data for params[%d] [%lu cycles, 0-%d]:\r\n",
+             param_index, processed_data_size);
+    CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+    HAL_Delay(10);
+
+    // Данные корреляционной функции
+    char data_line[256] = "";
+    for (uint32_t i = 0; i < processed_data_size; i++) {
+        char val_str[16];
+        // АБСОЛЮТНЫЕ значения уже сохранены в autocorrelation_result
+        snprintf(val_str, sizeof(val_str), "%8.4f ", autocorrelation_result[i]);
+        strncat(data_line, val_str, sizeof(data_line) - strlen(data_line) - 1);
+
+        // Перенос строки каждые 8 значений
+        if ((i+1) % 8 == 0 || i == processed_data_size-1) {
+            strncat(data_line, "\r\n", sizeof(data_line) - strlen(data_line) - 1);
+            CDC_Transmit_FS((uint8_t*)data_line, strlen(data_line));
+            HAL_Delay(10);
+            data_line[0] = '\0';
+        }
+    }
+
+    // Пустая строка в конце
+    CDC_Transmit_FS((uint8_t*)"\r\n", 2);
+}
 /**
   * @brief Расчет толщины автокорреляционным методом
   */
@@ -294,10 +383,12 @@ void CalculateAndSendACFThickness(uint8_t param_set) {
     thickness_value = max_index / (2.0f * one_point_mm);
 }
 
-/**
-  * @brief Обработка данных в зависимости от выбранного метода для конкретного набора параметров
-  */
+void CalculateAutocorrelation2(uint8_t param_set) {
+
+	}
 void ProcessDataByMethod(uint8_t param_set) {
+    // Очистка перед началом новой обработки
+    CleanupDynamicBuffers();
     if (param_set >= NUM_PARAM_SETS || !parameters_initialized[param_set]) {
         return;
     }
@@ -307,44 +398,83 @@ void ProcessDataByMethod(uint8_t param_set) {
         return;
     }
 
-    // Копируем данные из усредненного массива FPGA
-    uint32_t copy_size = (DATA_SIZE < FINAL_DATA_SIZE) ? DATA_SIZE : FINAL_DATA_SIZE;
-    for (uint32_t i = 0; i < copy_size; i++) {
-        final_data[i] = averaged_fpga_data[i];
+    // Освобождаем предыдущие буферы, если они были выделены
+    if (normalized_data != NULL) {
+        free(normalized_data);
+        normalized_data = NULL;
+    }
+    if (autocorrelation_result != NULL) {
+        free(autocorrelation_result);
+        autocorrelation_result = NULL;
     }
 
-    for (uint32_t i = copy_size; i < FINAL_DATA_SIZE; i++) {
-        final_data[i] = 0.0f;
+    // Рассчитываем размер данных для обработки
+    processed_data_size = params[param_set].end_index;
+    if (processed_data_size <= 0 || processed_data_size > DATA_SIZE) {
+        thickness_value = 0.0f;
+        return;
+    }
+
+    // Выделяем память для буферов
+    normalized_data = (float32_t*)malloc(processed_data_size * sizeof(float32_t));
+    autocorrelation_result = (float32_t*)malloc((processed_data_size) * sizeof(float32_t));
+
+    if (normalized_data == NULL || autocorrelation_result == NULL) {
+        // Освобождаем в случае ошибки
+        if (normalized_data != NULL) free(normalized_data);
+        if (autocorrelation_result != NULL) free(autocorrelation_result);
+        thickness_value = 0.0f;
+        return;
+    }
+
+    // Инициализируем буферы нулями
+    memset(normalized_data, 0, processed_data_size * sizeof(float32_t));
+    memset(autocorrelation_result, 0, processed_data_size * sizeof(float32_t));
+    memset(new_final_data, 0, params[param_set].points_count * sizeof(float32_t));
+
+    // Копируем данные из усредненного массива FPGA
+    uint32_t copy_size = (DATA_SIZE < DATA_SIZE) ? DATA_SIZE : DATA_SIZE;
+    for (uint32_t i = 0; i < copy_size; i++) {
+        new_final_data[i] = averaged_fpga_data[i];
+    }
+
+    for (uint32_t i = copy_size; i < DATA_SIZE; i++) {
+        new_final_data[i] = 0.0f;
     }
 
     // Обрабатываем данные в зависимости от выбранного метода
     switch (params[param_set].method) {
         case 0:
             // Автокорреляционный метод
-            arm_copy_f32(final_data, normalized_data, DATA_VALUES_COUNT);
+            // Копируем только нужную часть данных
+            for (uint32_t i = 0; i < processed_data_size; i++) {
+                normalized_data[i] = new_final_data[i + params[param_set].probe_length];
+            }
             NormalizeData(param_set);
             CalculateAutocorrelation(param_set);
+          //  PrintAutocorrelationToUSB(param_set);
             CalculateAndSendACFThickness(param_set);
+
             break;
 
         case 1:
             // Метод перехода через ноль
-            CalculateZeroCrossingThickness(final_data, param_set);
+            CalculateZeroCrossingThickness(new_final_data, param_set);
             break;
 
         case 2:
             // Метод стробов
-            CalculateStrobeThickness(final_data, param_set);
+            CalculateStrobeThickness(new_final_data, param_set);
             break;
 
         default:
             break;
     }
 }
-
 /**
   * @brief Функция для получения активного набора параметров (по умолчанию первый)
   */
 uint8_t GetActiveParamSet(void) {
     return 0; // Всегда используем первый набор параметров как указано в задании
 }
+

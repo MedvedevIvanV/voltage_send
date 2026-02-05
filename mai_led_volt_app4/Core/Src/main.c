@@ -19,7 +19,7 @@
 #include "thickness_calculator.h"
 #include "temperature_sensor.h"
 #include "stm32f4xx_hal.h"
-#include <pin_fsmc.h>  // Файл с конфигурацией ПЛИС (массив uint8_t fpga_config[])
+#include <pin_fsmc5.h>  // Файл с конфигурацией ПЛИС (массив uint8_t fpga_config[])
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -30,7 +30,6 @@
 /* USER CODE BEGIN PD */
 #define START_PULSE_DURATION_NS 200   // Длительность стартового импульса в наносекундах
 #define USB_RX_BUFFER_SIZE 1100
-#define FINAL_DATA_SIZE 1000
 #define UART_RX_TIMEOUT_MS 100
 
 // LoRa module pins
@@ -53,7 +52,7 @@
 #define ACK_STRING           "ACK\r\n"
 #define COMPLETE_STRING      "COMPLETE\r\n"
 
-#define DATA_SIZE 5000       // Количество значений в ПЛИС
+
 #define VALUES_PER_LINE 10            // Количество значений в строке вывода
 /* USER CODE END PD */
 
@@ -271,6 +270,8 @@ void ParsePRSection(char* pr_str, int pr_index) {
                 params[pr_index].sensor_number[sizeof(params[pr_index].sensor_number) - 1] = '\0';
             } else if (strcmp(param_name, "gain") == 0) {
                 params[pr_index].gain = atof(param_value);
+            } else if (strcmp(param_name, "points_count") == 0) {
+                params[pr_index].points_count = atoi(param_value);
             }
         }
         token = strtok(NULL, "|");
@@ -355,6 +356,9 @@ void ParseParameters(const char* params_str) {
 /**
   * @brief Отправка текущих параметров обратно в приложение
   */
+/**
+  * @brief Отправка текущих параметров обратно в приложение
+  */
 void SendParametersResponse(void) {
     // Отправляем параметры только для активных каналов
     for (int i = 0; i < 4; i++) {
@@ -367,11 +371,11 @@ void SendParametersResponse(void) {
             "PR%d:method=%lu|wave_speed=%.1f|threshold=%.1f|threshold_zero_crossing=%.1f|"
             "start_index=%lu|probe_length=%lu|strobe_left1=%lu|strobe_right1=%lu|"
             "strobe_left2=%lu|strobe_right2=%lu|end_index=%lu|cycle_number=%lu|"
-            "sensor_number=%s|gain=%.1f|start_date=%s|period=%lu;USB:%u\r\n",
+            "sensor_number=%s|gain=%.1f|points_count=%lu|start_date=%s|period=%lu;USB:%u\r\n",
             i+1, params[i].method, params[i].wave_speed, params[i].threshold, params[i].threshold_zero_crossing,
             params[i].start_index, params[i].probe_length, params[i].first_left_strobe, params[i].first_right_strobe,
             params[i].second_left_strobe, params[i].second_right_strobe, params[i].end_index, params[i].cycle_number,
-            params[i].sensor_number, params[i].gain, start_date, period, usb_status);
+            params[i].sensor_number, params[i].gain, params[i].points_count, start_date, period, usb_status);
 
         CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
         HAL_Delay(10);
@@ -474,7 +478,7 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
                 calculate_thickness_requested = true;
 
                 uint32_t start_time = HAL_GetTick();
-                while (calculate_thickness_requested && (HAL_GetTick() - start_time) < 5000) {
+                while (calculate_thickness_requested && (HAL_GetTick() - start_time) < 15000) {
                     if (calculate_thickness_requested) {
                         calculate_thickness_requested = false;
                         ProcessDataByMethod(i); // Используем текущий набор параметров
@@ -483,7 +487,7 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
                     HAL_Delay(10);
                 }
             }
-           PrintDataToUSB(i);
+            PrintDataToUSB(i);
             fpga_data.data_ready = false;
         }
 
@@ -861,12 +865,22 @@ void ReadFPGAData(int param_index) {
         }
 
         __disable_irq();
-
+        if (params[param_index].method == 2) {
+        // Пропускаем оставшиеся точки (6000 - DATA_SIZE)
+                for (int i = 0; i < params[param_index].probe_length; i++) {
+                    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, RESET);  // OE = 0
+                    // Короткая задержка для чтения (без сохранения)
+                    for(volatile int d = 0; d < 10; d++);
+                    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, SET);    // OE = 1
+                    for(volatile int d = 0; d < 10; d++);
+                }
+        }
         // Считываем DATA_SIZE точек и проверяем порог
         for (int i = 0; i < DATA_SIZE; i++) {
             HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, RESET);  // OE = 0
 
-            // ЕСЛИ РАССКОМЕНТИРОВАТЬ ТО ПОПАДЕМ В БЕСКОНЕЧНЫЙ ЦИКЛ
+
+            // ЕСЛИ РАСКОММЕНТИРОВАТЬ, ТО ПОПАДЕМ В БЕСКОНЕЧНЫЙ ЦИКЛ
             // while(!fl) {
             //     if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_9)) {  // PD9 = бит 14
             //         fl = true;
@@ -892,7 +906,7 @@ void ReadFPGAData(int param_index) {
             temp_fpga_buffer[i] = n_date & 0x0FFF;
 
             // Проверяем порог ТОЛЬКО для точек после индекса 400
-            if (i > 600) {
+//            if (i > params[param_index].probe_length) {
                 // Вычисляем абсолютное значение (с вычитанием 2047)
                 float value = temp_fpga_buffer[i] - 2047.0;
                 if (fabsf(value) > threshold) {
@@ -904,7 +918,7 @@ void ReadFPGAData(int param_index) {
 //                    __enable_irq();
 //                    break;
                 }
-            }
+//            }
 
             // Завершаем чтение текущего слова
             HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, SET);  // OE = 1
@@ -912,17 +926,30 @@ void ReadFPGAData(int param_index) {
             // Короткая задержка между словами
             for(volatile int d = 0; d < 10; d++);
         }
-
+//        // Пропускаем оставшиеся точки (6000 - DATA_SIZE)
+        if (PLIS_DATA_SIZE > (DATA_SIZE + params[param_index].probe_length)) {
+        for (int i = 0; i < (PLIS_DATA_SIZE - (DATA_SIZE + params[param_index].probe_length)); i++) {
+            HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, RESET);  // OE = 0
+            // Короткая задержка для чтения (без сохранения)
+            for(volatile int d = 0; d < 10; d++);
+            HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, SET);    // OE = 1
+            for(volatile int d = 0; d < 10; d++);
+        }}
         __enable_irq();
 
         // ЕСЛИ порог превышен - НЕМЕДЛЕННО переходим к следующему cycle
         // БЕЗ сохранения и усреднения!
         if (threshold_exceeded) {
-        	if (cycles == 1) {
-        		break;
-        	}
-        	else {
-            continue;}  // Пропускаем весь остальной код цикла
+            if (cycles == 1) {
+                break;
+            }
+            else {
+                // ОЧИЩАЕМ буфер перед следующим циклом
+                for (int i = 0; i < DATA_SIZE; i++) {
+                    temp_fpga_buffer[i] = 0;
+                }
+                continue;  // Пропускаем весь остальной код цикла
+            }
         }
 
         // Только если порог НЕ превышен - усредняем данные

@@ -7,9 +7,8 @@
 #include <string.h>
 
 // Определения размеров
-#define FINAL_DATA_SIZE 1000
-#define DATA_VALUES_COUNT 1000
-#define DATA_SIZE 5000
+#define DATA_SIZE 5100
+#define PLIS_DATA_SIZE 10000
 #define NUM_PARAM_SETS 4
 
 // Структура для хранения параметров (одного набора)
@@ -28,6 +27,7 @@ typedef struct {
     uint32_t cycle_number;
     char sensor_number[5];
     float gain;
+    uint32_t points_count;
     uint32_t crc;
 } Parameters_t;
 
@@ -48,10 +48,10 @@ extern float averaged_fpga_data[DATA_SIZE];
 extern bool averaging_complete;
 
 // Буферы данных
-extern float32_t normalized_data[DATA_VALUES_COUNT];
-extern float32_t autocorrelation_result[DATA_VALUES_COUNT];
-extern float32_t temp_data[FINAL_DATA_SIZE];
-extern float32_t final_data[FINAL_DATA_SIZE];
+//extern float32_t normalized_data[DATA_VALUES_COUNT];
+//extern float32_t autocorrelation_result[DATA_VALUES_COUNT];
+//extern float32_t temp_data[FINAL_DATA_SIZE];
+//extern float32_t final_data[FINAL_DATA_SIZE];
 extern uint32_t successful_cycles;
 
 // Функции для работы с параметрами
