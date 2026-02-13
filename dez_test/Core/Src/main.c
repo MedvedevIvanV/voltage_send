@@ -36,7 +36,7 @@
 /* USER CODE BEGIN PD */
 #define UART_RX_BUF_SIZE       128
 #define UART_TIMEOUT_MS        100
-#define COMPLETE_TIMEOUT_MS    50000  // 15 секунд ожидания COMPLETE
+#define COMPLETE_TIMEOUT_MS    10000  // 15 секунд ожидания COMPLETE
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -56,7 +56,7 @@ uint8_t uart_rx_buf[UART_RX_BUF_SIZE];
 uint8_t uart_rx_pos = 0;
 volatile uint8_t uart_cmd_ready = 0;
 uint32_t uart_last_rx_time = 0;
-uint32_t period_sec = 0;
+uint32_t period_sec = 1;
 uint32_t last_send_time = 0;
 
 // Флаг для отслеживания пробуждения
@@ -192,9 +192,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   */
 static void enter_sleep_mode(void)
 {
-    // ЕСЛИ USB_STATUS = 1, ТО НЕ ПЕРЕХОДИМ В СОН И НЕ ОТКЛЮЧАЕМ ПИНЫ!
-    if (usb_connection_status == 1) {
-        return;
+    // ПРОВЕРЯЕМ ЧЕТНОСТЬ ПЕРИОДА вместо USB статуса
+    if (period_sec % 2 != 0) {  // Если период НЕчетный
+        return;  // Не переходим в сон
     }
 
     // Выключаем пины PB0 и PC13 только если USB_STATUS = 0
@@ -204,10 +204,7 @@ static void enter_sleep_mode(void)
     // Настраиваем RTC WakeUp для периода сна
     HAL_RTCEx_DeactivateWakeUpTimer(&hrtc);
 
-    // Расчет для периода сна: LSI = ~32.768 kHz, делитель 16 -> 2048 Гц
-    // 2048 Гц * период_сек = количество тиков
-    uint32_t wakeup_ticks = (period_sec * 2048) - 1;
-    if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, wakeup_ticks, RTC_WAKEUPCLOCK_RTCCLK_DIV16, 0) != HAL_OK)
+    if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, period_sec, RTC_WAKEUPCLOCK_CK_SPRE_16BITS, 0) != HAL_OK)
     {
         Error_Handler();
     }
@@ -215,7 +212,6 @@ static void enter_sleep_mode(void)
     // Переходим в режим сна
     HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
 }
-
 /**
   * @brief Process UART command from main MCU
   */
@@ -254,7 +250,7 @@ static void process_uart_command(uint8_t* data, uint8_t len)
        send_datetime_with_voltage_and_temp(date_str, time_str);
 
         // ЕСЛИ USB_STATUS = 1, ТО НЕ ПЕРЕХОДИМ В СОН И НЕ ОТКЛЮЧАЕМ ПИНЫ!
-        if (usb_connection_status == 0) {
+       if (period_sec % 2 == 0) {
             // Ждем COMPLETE сообщение или таймаут 10 секунд
             uint32_t start_time = HAL_GetTick();
             complete_received = 0;
@@ -387,7 +383,7 @@ int main(void)
 
 	  // Измеряем напряжение и температуру
 	  // ГЛАВНОЕ ИЗМЕНЕНИЕ: Проверяем флаг пробуждения от RTC ТОЛЬКО если период уже получен И USB_STATUS = 0
-	     if(wakeup_flag && period_received && (usb_connection_status == 0))
+	  if(wakeup_flag && period_received && (period_sec % 2 == 0))
 	     {
 	         // Сбрасываем флаг
 	         wakeup_flag = 0;
@@ -456,7 +452,6 @@ int main(void)
 	 }
 	 /* USER CODE END 3 */
 }
-
 // Остальной код без изменений (SystemClock_Config, MX_ADC1_Init, MX_LPUART1_UART_Init, MX_RTC_Init, MX_GPIO_Init, Error_Handler)
 
 /**

@@ -4,10 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "arm_math.h"
-#include "kiss_fft.h"
 #include <math.h>
 // Определения
-#define PARAMS_FLASH_ADDRESS 0x08080000
+#define PARAMS_FLASH_ADDRESS 0x08060000
 #define PARAMS_SET_SIZE (sizeof(Parameters_t))
 #define TOTAL_FLASH_SIZE (PARAMS_SET_SIZE * NUM_PARAM_SETS)
 
@@ -24,14 +23,17 @@ float frequency_ns = 12.5e-9f;
 float32_t* normalized_data = NULL;
 float32_t* autocorrelation_result = NULL;
 uint32_t processed_data_size = 0;
+uint32_t final_data_size = 0;
 
-float32_t* new_final_data = NULL;
+
+
+// float32_t* new_final_data = NULL;
 // float32_t new_final_data[DATA_SIZE] = {0};
 
 // Внешние переменные
-extern float averaged_fpga_data[DATA_SIZE];
+extern float32_t* averaged_fpga_data; // ТОЛЬКО объявление (без создания!)
 extern bool averaging_complete;
-
+extern uint32_t DATA_SIZE;
 // Вспомогательная функция для отправки сообщений
 void SendUSBDebugMessage(const char *message);
 
@@ -81,7 +83,7 @@ void SaveParametersToFlash(void) {
     }
 
     // Стираем сектор Flash
-    FLASH_Erase_Sector(FLASH_SECTOR_11, VOLTAGE_RANGE_3);
+    FLASH_Erase_Sector(FLASH_SECTOR_7, VOLTAGE_RANGE_3);
 
     // Сохраняем все наборы параметров
     uint8_t* destination = (uint8_t*)PARAMS_FLASH_ADDRESS;
@@ -107,33 +109,53 @@ void InitializeParamSet(uint8_t set_number) {
     if (set_number >= NUM_PARAM_SETS) return;
 
     params[set_number].start_index = 100;
-    params[set_number].wave_speed = 520.0f;
-    params[set_number].first_left_strobe = 20;
-    params[set_number].first_right_strobe = 120;
-    params[set_number].second_left_strobe = 140;
-    params[set_number].second_right_strobe = 240;
-    params[set_number].threshold = 9999.0f;
-    params[set_number].threshold_zero_crossing = 600.0f;
-    params[set_number].probe_length = 400;
-    params[set_number].method = set_number; // Разные методы по умолчанию для разных наборов
-    params[set_number].end_index = 400;
+    params[set_number].wave_speed = 1.0f;
+    params[set_number].first_left_strobe = 900;
+    params[set_number].first_right_strobe = 1300;
+    params[set_number].second_left_strobe = 2400;
+    params[set_number].second_right_strobe = 2900;
+    params[set_number].threshold = 1900.0f;
+    params[set_number].threshold_zero_crossing = 90.0f;
+    params[set_number].probe_length = 0;
+    params[set_number].method = 2; // Разные методы по умолчанию для разных наборов
+    params[set_number].end_index = 0;
     params[set_number].cycle_number = 10;
     strncpy(params[set_number].sensor_number, "0001", sizeof(params[set_number].sensor_number));
-    params[set_number].gain = 1.0f;
-    params[set_number].points_count = 5000; // Значение по умолчанию для points_count
+    params[set_number].gain = 3200.0f;
+    params[set_number].points_count = 400; // Значение по умолчанию для points_count
     parameters_initialized[set_number] = true;
 }
 
 /**
   * @brief Инициализация всех параметров
   */
-void InitializeParameters(void) {
-    for (uint8_t i = 0; i < NUM_PARAM_SETS; i++) {
-        InitializeParamSet(i);
-    }
-    SaveParametersToFlash();
-}
-
+//void InitializeParameters(void) {
+//    for (uint8_t i = 0; i < NUM_PARAM_SETS; i++) {
+//        InitializeParamSet(i);
+//    }
+//    SaveParametersToFlash();
+//}
+//void InitializeParameters(void) {
+//    // Сначала пробуем загрузить из Flash
+//    LoadParametersFromFlash();
+//
+//    // Проверяем, загрузились ли параметры
+//    bool any_initialized = false;
+//    for (uint8_t i = 0; i < NUM_PARAM_SETS; i++) {
+//        if (parameters_initialized[i]) {
+//            any_initialized = true;
+//            break;
+//        }
+//    }
+//
+//    // Если ни один набор не загрузился - инициализируем значениями по умолчанию
+//    if (!any_initialized) {
+//        for (uint8_t i = 0; i < NUM_PARAM_SETS; i++) {
+//            InitializeParamSet(i);
+//        }
+//        SaveParametersToFlash();
+//    }
+//}
 /**
   * @brief Копирование данных
   */
@@ -178,11 +200,11 @@ void CalculateAutocorrelation(uint8_t param_set) {
         autocorrelation_result == NULL || processed_data_size == 0) return;
 
     for (uint32_t lag = 0; lag < processed_data_size; lag++) {
-        double sum = 0.0;
+    	float32_t sum = 0.0;
         uint32_t count = processed_data_size - lag;
 
         for (uint32_t i = 0; i < count; i++) {
-            sum += (double)normalized_data[i] * (double)normalized_data[i + lag];
+            sum += (float32_t)normalized_data[i] * (float32_t)normalized_data[i + lag];
         }
 
         autocorrelation_result[lag] = (float32_t)fabs(sum / count);
@@ -202,11 +224,7 @@ uint32_t FindMaxAutocorrelationIndex(uint8_t param_set) {
 
     // Проверяем границы
     uint32_t search_start = params[param_set].start_index;
-    uint32_t search_end = DATA_SIZE - params[param_set].end_index - params[param_set].probe_length;
-
-    if (search_end > processed_data_size) {
-        search_end = processed_data_size;
-    }
+    uint32_t search_end = processed_data_size / 2;
 
     if (search_start >= search_end) {
         return search_start;
@@ -277,7 +295,7 @@ void CalculateZeroCrossingThickness(const float32_t* data, uint8_t param_set) {
         return;
     }
 
-    uint32_t final_index = zero_crossing_index;
+    uint32_t final_index = zero_crossing_index + params[param_set].points_count;
     thickness_value = final_index / (2.0f * one_point_mm);
 }
 
@@ -306,7 +324,7 @@ void CalculateStrobeThickness(const float32_t* data, uint8_t param_set) {
     uint32_t right2 = params[param_set].second_right_strobe;
 
     if (left1 > right1 || left2 > right2 ||
-        right1 >= DATA_SIZE || right2 >= DATA_SIZE) {
+        right1 >= params[param_set].end_index || right2 >= params[param_set].end_index) {
         thickness_value = 0.0f;
         return;
     }
@@ -336,7 +354,7 @@ void CalculateStrobeThickness(const float32_t* data, uint8_t param_set) {
         return;
     }
 
-    uint32_t diff = idx2 - idx1;
+    uint32_t diff = idx2 - idx1; // + params[param_set].points_count;
     thickness_value = diff / (2.0f * one_point_mm);
 }
 void PrintAutocorrelationToUSB(int param_index) {
@@ -383,9 +401,6 @@ void CalculateAndSendACFThickness(uint8_t param_set) {
     thickness_value = max_index / (2.0f * one_point_mm);
 }
 
-void CalculateAutocorrelation2(uint8_t param_set) {
-
-	}
 void ProcessDataByMethod(uint8_t param_set) {
     // Очистка перед началом новой обработки
     CleanupDynamicBuffers();
@@ -409,7 +424,7 @@ void ProcessDataByMethod(uint8_t param_set) {
     }
 
     // Рассчитываем размер данных для обработки
-    processed_data_size = params[param_set].end_index;
+    processed_data_size = (params[param_set].end_index - (params[param_set].points_count + params[param_set].probe_length));
     if (processed_data_size <= 0 || processed_data_size > DATA_SIZE) {
         thickness_value = 0.0f;
         return;
@@ -427,20 +442,10 @@ void ProcessDataByMethod(uint8_t param_set) {
         return;
     }
 
+
     // Инициализируем буферы нулями
     memset(normalized_data, 0, processed_data_size * sizeof(float32_t));
     memset(autocorrelation_result, 0, processed_data_size * sizeof(float32_t));
-    memset(new_final_data, 0, params[param_set].points_count * sizeof(float32_t));
-
-    // Копируем данные из усредненного массива FPGA
-    uint32_t copy_size = (DATA_SIZE < DATA_SIZE) ? DATA_SIZE : DATA_SIZE;
-    for (uint32_t i = 0; i < copy_size; i++) {
-        new_final_data[i] = averaged_fpga_data[i];
-    }
-
-    for (uint32_t i = copy_size; i < DATA_SIZE; i++) {
-        new_final_data[i] = 0.0f;
-    }
 
     // Обрабатываем данные в зависимости от выбранного метода
     switch (params[param_set].method) {
@@ -448,7 +453,7 @@ void ProcessDataByMethod(uint8_t param_set) {
             // Автокорреляционный метод
             // Копируем только нужную часть данных
             for (uint32_t i = 0; i < processed_data_size; i++) {
-                normalized_data[i] = new_final_data[i + params[param_set].probe_length];
+                normalized_data[i] = averaged_fpga_data[i + params[param_set].probe_length];
             }
             NormalizeData(param_set);
             CalculateAutocorrelation(param_set);
@@ -459,17 +464,20 @@ void ProcessDataByMethod(uint8_t param_set) {
 
         case 1:
             // Метод перехода через ноль
-            CalculateZeroCrossingThickness(new_final_data, param_set);
+            CalculateZeroCrossingThickness(averaged_fpga_data, param_set);
             break;
 
         case 2:
             // Метод стробов
-            CalculateStrobeThickness(new_final_data, param_set);
+            CalculateStrobeThickness(averaged_fpga_data, param_set);
             break;
 
         default:
             break;
     }
+
+    free(normalized_data);
+    free(autocorrelation_result);
 }
 /**
   * @brief Функция для получения активного набора параметров (по умолчанию первый)
@@ -477,4 +485,3 @@ void ProcessDataByMethod(uint8_t param_set) {
 uint8_t GetActiveParamSet(void) {
     return 0; // Всегда используем первый набор параметров как указано в задании
 }
-

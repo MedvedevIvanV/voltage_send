@@ -112,7 +112,6 @@ float received_temp = 0.0f;
 float dac_voltage = 0.0f;
 uint32_t dac_last_update = 0;
 typedef struct {
-    uint16_t data[DATA_SIZE]; // Буфер для хранения данных от ПЛИС
     bool data_ready;                  // Флаг готовности данных
     uint8_t data_count;               // Количество считанных данных
 } FPGA_Data;
@@ -120,9 +119,14 @@ typedef struct {
 FPGA_Data fpga_data;                 // Структура для хранения данных ПЛИС
 
 
-uint16_t temp_fpga_buffer[DATA_SIZE];     // Временный буфер для чтения
-float averaged_fpga_data[DATA_SIZE];   // Итоговый усредненный массив
+//uint16_t temp_fpga_buffer[DATA_SIZE];     // Временный буфер для чтения
+//float averaged_fpga_data[DATA_SIZE];   // Итоговый усредненный массив
 bool averaging_complete = false;          // Флаг завершения усреднения
+
+
+uint16_t* temp_fpga_buffer = NULL; // Временный буфер для чтения
+float32_t* averaged_fpga_data = NULL; // Итоговый усредненный массив
+uint32_t DATA_SIZE = 0;
 
 // Переменные для хранения результатов расчета толщины для каждого набора
 float thickness_values[4] = {0};
@@ -301,9 +305,9 @@ void ParseParameters(const char* params_str) {
     }
 
     // Сохраняем старый gain ДО парсинга для всех наборов
-    for (int i = 0; i < 4; i++) {
-        old_gain[i] = params[i].gain;
-    }
+//    for (int i = 0; i < 4; i++) {
+//        old_gain[i] = params[i].gain;
+//    }
 
     // Разбиваем всю строку на секции по '/'
     char* sections[20]; // Максимум 20 секций
@@ -345,7 +349,7 @@ void ParseParameters(const char* params_str) {
 
     // Сохраняем обновленные параметры в Flash (без start_date и period)
     SaveParametersToFlash();
-
+    HAL_Delay(1000);
     // ОТПРАВЛЯЕМ ДАННЫЕ НА ДЕЖУРНЫЙ МК ПО UART
     SendDateTimeToBackupMCU();
 
@@ -459,17 +463,18 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
             }
 
 //            // Остальной код обработки для активного канала остается без изменений
-//            switch(i) {
-//                case 0: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET); break;
-//                case 1: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_SET); break;
-//                case 2: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET); break;
-//                case 3: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_SET); break;
-//            }
+            switch(i) {
+                case 0: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET); break;
+                case 1: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_SET); break;
+                case 2: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET); break;
+                case 3: HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_SET); break;
+            }
 
         // Устанавливаем DAC напряжение для текущего набора параметров
            Set_DAC_Voltage((uint32_t)params[i].gain);
             //Set_DAC_Voltage(1212);
         // Читаем данные ПЛИС с текущими параметрами
+
         ReadFPGAData(i);
 
         if (fpga_data.data_ready) {
@@ -478,7 +483,7 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
                 calculate_thickness_requested = true;
 
                 uint32_t start_time = HAL_GetTick();
-                while (calculate_thickness_requested && (HAL_GetTick() - start_time) < 15000) {
+                while (calculate_thickness_requested && (HAL_GetTick() - start_time) < 10000) {
                     if (calculate_thickness_requested) {
                         calculate_thickness_requested = false;
                         ProcessDataByMethod(i); // Используем текущий набор параметров
@@ -486,9 +491,18 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
                     }
                     HAL_Delay(10);
                 }
-            }
-            PrintDataToUSB(i);
+              }
+          //PrintDataToUSB(i);
+
+            free(temp_fpga_buffer);
+            free(averaged_fpga_data);
+
+            memset(&fpga_data, 0, sizeof(fpga_data));
+
+            // Сброс флагов
             fpga_data.data_ready = false;
+            averaging_complete = false;
+
         }
 
 
@@ -525,11 +539,11 @@ void ProcessUARTCommand(uint8_t* data, uint8_t len) {
         }
 
 
-
         HAL_Delay(100);
         SendMeasurementDataViaLoRa(i);
         HAL_Delay(2000);
         SendTestDataViaLoRa();
+
 
     }
 
@@ -550,9 +564,9 @@ bool InitializeLoRa(void) {
     radio.reset_pin = sx1262_reset_pin;
     radio.hspi = &hspi2;
 
-    lora_params.sf = SX126X_LORA_SF9;
+    lora_params.sf = SX126X_LORA_SF10;
     lora_params.bw = SX126X_LORA_BW_125;
-    lora_params.cr = SX126X_LORA_CR_4_5;
+    lora_params.cr = SX126X_LORA_CR_4_7;
     lora_params.ldro = 0x00;
 
     pkt_params.preamble_len_in_symb = 12;
@@ -567,7 +581,7 @@ bool InitializeLoRa(void) {
     pa_params.pa_lut = 0x01;
 
     pa_power = 20;
-    frequency = 868900000U;
+    frequency = 868000000U;
 
     sx126x_status_t status = sx126x_hal_reset(&radio);
     if (status != SX126X_STATUS_OK) {
@@ -832,10 +846,17 @@ void SendUARTResponse(const char* response)
  * @brief Многократное чтение и усреднение данных из ПЛИС с проверкой порога для конкретного набора параметров
  */
 void ReadFPGAData(int param_index) {
-    // Инициализация итогового массива нулями
-    memset(averaged_fpga_data, 0, sizeof(averaged_fpga_data));
-    averaging_complete = false;
 
+	DATA_SIZE = (params[param_index].end_index - params[param_index].points_count);
+
+	temp_fpga_buffer = (uint16_t*)malloc(DATA_SIZE * sizeof(uint16_t));
+	averaged_fpga_data = (float32_t*)malloc((DATA_SIZE) * sizeof(float32_t));
+
+    memset(temp_fpga_buffer, 0, DATA_SIZE * sizeof(uint16_t));
+    memset(averaged_fpga_data, 0, DATA_SIZE * sizeof(float32_t));
+    //HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+    averaging_complete = false;
+    uint32_t count_plis  = 0;
     // Получаем количество циклов из параметров текущего набора
     uint32_t cycles = params[param_index].cycle_number;
     float threshold = params[param_index].threshold;
@@ -865,16 +886,15 @@ void ReadFPGAData(int param_index) {
         }
 
         __disable_irq();
-        if (params[param_index].method == 2) {
-        // Пропускаем оставшиеся точки (6000 - DATA_SIZE)
-                for (int i = 0; i < params[param_index].probe_length; i++) {
+
+                for (int i = 0; i < params[param_index].points_count; i++) {
                     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, RESET);  // OE = 0
                     // Короткая задержка для чтения (без сохранения)
                     for(volatile int d = 0; d < 10; d++);
                     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, SET);    // OE = 1
                     for(volatile int d = 0; d < 10; d++);
                 }
-        }
+
         // Считываем DATA_SIZE точек и проверяем порог
         for (int i = 0; i < DATA_SIZE; i++) {
             HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, RESET);  // OE = 0
@@ -906,7 +926,7 @@ void ReadFPGAData(int param_index) {
             temp_fpga_buffer[i] = n_date & 0x0FFF;
 
             // Проверяем порог ТОЛЬКО для точек после индекса 400
-//            if (i > params[param_index].probe_length) {
+            if (i > params[param_index].probe_length) {
                 // Вычисляем абсолютное значение (с вычитанием 2047)
                 float value = temp_fpga_buffer[i] - 2047.0;
                 if (fabsf(value) > threshold) {
@@ -918,7 +938,7 @@ void ReadFPGAData(int param_index) {
 //                    __enable_irq();
 //                    break;
                 }
-//            }
+           }
 
             // Завершаем чтение текущего слова
             HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, SET);  // OE = 1
@@ -927,8 +947,9 @@ void ReadFPGAData(int param_index) {
             for(volatile int d = 0; d < 10; d++);
         }
 //        // Пропускаем оставшиеся точки (6000 - DATA_SIZE)
-        if (PLIS_DATA_SIZE > (DATA_SIZE + params[param_index].probe_length)) {
-        for (int i = 0; i < (PLIS_DATA_SIZE - (DATA_SIZE + params[param_index].probe_length)); i++) {
+        if (params[param_index].end_index > 0) {
+        count_plis  = PLIS_DATA_SIZE - params[param_index].end_index;
+        for (int i = 0; i < count_plis; i++) {
             HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, RESET);  // OE = 0
             // Короткая задержка для чтения (без сохранения)
             for(volatile int d = 0; d < 10; d++);
@@ -968,9 +989,6 @@ void ReadFPGAData(int param_index) {
 
     // Копируем усредненные данные в основную структуру только если есть валидные циклы
     if (valid_cycles > 0) {
-       for (int i = 0; i < DATA_SIZE; i++) {
-           fpga_data.data[i] = (uint16_t)averaged_fpga_data[i];
-       }
        fpga_data.data_count = DATA_SIZE;
        fpga_data.data_ready = true;
        averaging_complete = true;
@@ -978,6 +996,8 @@ void ReadFPGAData(int param_index) {
        fpga_data.data_ready = false;
        averaging_complete = false;
    }
+
+    // PrintDataToUSB(0);
 }
 
 /**
@@ -1011,14 +1031,9 @@ void PrintDataToUSB(int param_index) {
        }
    }
 
-   // ОБНУЛЕНИЕ БУФЕРОВ ПОСЛЕ ПЕРЕДАЧИ
-   memset(averaged_fpga_data, 0, sizeof(averaged_fpga_data));
-   memset(temp_fpga_buffer, 0, sizeof(temp_fpga_buffer));
-   memset(&fpga_data, 0, sizeof(fpga_data));
+//   memset(averaged_fpga_data, 0, DATA_SIZE * sizeof(float32_t));
+//   memset(temp_fpga_buffer, 0, DATA_SIZE * sizeof(uint16_t));
 
-   // Сброс флагов
-   fpga_data.data_ready = false;
-   averaging_complete = false;
 }
 
 /**
@@ -1193,12 +1208,14 @@ int main(void)
     for (int i = 0; i < 4; i++) {
         active_channels[i] = false;
     }
-
+    active_channels[0] = true;
     HAL_Delay(1000);
     LoadParametersFromFlash();
     HAL_Delay(1000);
     InitializeLoRa();
  HAL_DAC_Start(&hdac, DAC_CHANNEL_1);  // ← ДОБАВЬТЕ ЭТУ СТРОКУ
+
+// HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
 
 //
 //
@@ -1241,6 +1258,41 @@ int main(void)
         if(uart_message_received) {
             uart_message_received = 0;
             ProcessUARTCommand((uint8_t*)uart_rx_data, uart_rx_len);
+
+//            HAL_Delay(1000);
+//            LoadParametersFromFlash();
+//            HAL_Delay(1000);
+//
+//        	 // ОТПРАВКА ВСЕХ ПАРАМЕТРОВ ПО USB
+//        	    char usb_msg[256];
+//        	    for (uint8_t i = 0; i < NUM_PARAM_SETS; i++) {
+//        	        if (parameters_initialized[i]) {
+//        	            snprintf(usb_msg, sizeof(usb_msg),
+//        	                "Params[%d]: sensor=%s, method=%d, speed=%.1f, start=%d, end=%d, "
+//        	                "left1=%d, right1=%d, left2=%d, right2=%d, threshold=%.1f, "
+//        	                "threshold_zc=%.1f, probe_len=%d, cycles=%d, gain=%.1f, points=%d, crc=0x%08lX\r\n",
+//        	                i,
+//        	                params[i].sensor_number,
+//        	                params[i].method,
+//        	                params[i].wave_speed,
+//        	                params[i].start_index,
+//        	                params[i].end_index,
+//        	                params[i].first_left_strobe,
+//        	                params[i].first_right_strobe,
+//        	                params[i].second_left_strobe,
+//        	                params[i].second_right_strobe,
+//        	                params[i].threshold,
+//        	                params[i].threshold_zero_crossing,
+//        	                params[i].probe_length,
+//        	                params[i].cycle_number,
+//        	                params[i].gain,
+//        	                params[i].points_count,
+//        	                params[i].crc);
+//
+//        	            CDC_Transmit_FS((uint8_t*)usb_msg, strlen(usb_msg));
+//        	            HAL_Delay(10);
+//        	        }
+//        	    }
         }
 
         // Таймаут UART приема
